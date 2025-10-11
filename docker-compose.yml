@@ -1,0 +1,47 @@
+services:
+  relay-server:
+    build:
+      context: .
+      target: relay-server
+    container_name: relay-server
+    ports:
+      - "8080:8080"
+    environment:
+      - EXTERNAL_PORT=8080
+      - EXTERNAL_IP=0.0.0.0
+    restart: unless-stopped
+    networks:
+      - libp2p-network
+
+  client-dev:
+    build:
+      context: .
+      target: client-dev
+    container_name: client
+    ports:
+      - "5173:5173"
+    environment:
+      - NODE_ENV=development
+    restart: unless-stopped
+    networks:
+      - libp2p-network
+    depends_on:
+      - relay-server
+
+  test:
+    build:
+      context: .
+      target: test
+    container_name: playwright-tests
+    depends_on:
+      - relay-server
+      - client-dev
+    environment:
+      - DOCKER=true
+      - PLAYWRIGHT_BASE_URL=http://client:5173
+    networks:
+      - libp2p-network
+
+networks:
+  libp2p-network:
+    driver: bridge

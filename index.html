@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <!-- Decentralized Threshold Signing Service - Browser Client -->
+  <title>Decentralized Threshold Signing Service</title>
+  <style>
+    /* CSS Styles for the UI */
+    label,
+    button {
+      display: block;
+      font-weight: bold;
+      margin: 5px 0;
+    }
+
+    div {
+      margin-bottom: 20px;
+    }
+
+    #send-section {
+      display: none;
+    }
+
+    input[type="text"] {
+      width: 800px;
+    }
+
+    .ss58-section {
+      background-color: #f0f8ff;
+      padding: 15px;
+      border-radius: 5px;
+      border: 1px solid #ddd;
+    }
+
+    .ss58-section input {
+      width: 600px;
+    }
+  </style>
+</head>
+
+<body>
+  <div id="app">
+    <div>
+      <h3>🔗 Auto-Connected to Relay</h3>
+      <p>This application automatically connects to the relay server at startup.</p>
+    </div>
+
+    <div id="send-section">
+      <label for="message">Message:</label>
+      <input type="text" id="message" value="hello" />
+      <button id="send">Send</button>
+    </div>
+
+    <!-- SS58 Address Storage Section -->
+    <div class="ss58-section">
+      <label for="ss58-address-input">SS58 Address:</label>
+      <input type="text" id="ss58-address-input"
+        placeholder="Enter your SS58 address (e.g., 5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY)" />
+      <button id="store-address-input">Store SS58 Address in Relay</button>
+    </div>
+
+    <!-- SS58 Address Lookup and Connection Section -->
+    <div class="ss58-section">
+      <label for="ss58-address">SS58 Address:</label>
+      <input type="text" id="ss58-address" placeholder="Enter SS58 address to find and connect to peer" />
+      <button id="connect-via-address">Find Peer & Connect</button>
+    </div>
+
+    <!-- Active Connections Display -->
+    <div id="connectionsWrapper">
+      <h3>Active Connections:</h3>
+      <ul id="connections"></ul>
+    </div>
+
+    <!-- Listening Addresses Display -->
+    <div id="listeningAddressesWrapper">
+      <h3>Listening addresses:</h3>
+      <ul id="multiaddrs"></ul>
+    </div>
+
+    <!-- Application Output/Log Section -->
+    <h3>Output:</h3>
+    <div id="output"></div>
+  </div>
+
+  <script type="module" src="./index.js"></script>
+</body>
+
+</html>
