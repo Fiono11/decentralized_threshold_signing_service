@@ -1,0 +1,16 @@
+[package]
+name = "olaf"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+# Enable building a wasm-compatible cdylib when targeting wasm
+crate-type = ["rlib", "cdylib"]
+
+[dependencies]
+schnorrkel = { git = "https://github.com/Fiono11/schnorrkel" }
+wasm-bindgen = { version = "0.2" }
+js-sys = { version = "0.3" }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.2", features = ["js"] }

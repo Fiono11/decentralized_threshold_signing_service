@@ -14,6 +14,26 @@ import { byteStream } from 'it-byte-stream'
 import { createLibp2p } from 'libp2p'
 import { fromString, toString } from 'uint8arrays'
 import { decodeAddress, encodeAddress } from '@polkadot/keyring'
+import initOlaf, { wasm_simplpedpop_contribute_all } from './olaf/pkg/olaf.js';
+
+// Initialize the WASM module once at startup
+await initOlaf();
+
+// Example usage:
+function contributeAllExample() {
+  // KEYPAIR_LENGTH must match schnorrkel’s size (e.g., 64 bytes)
+  const keypairBytes = new Uint8Array(/* your keypair bytes here */);
+
+  // threshold is a JS number; it’s converted to u16 in Rust
+  const threshold = 2;
+
+  // recipients_concat is the concatenation of N schnorrkel public keys, each PUBLIC_KEY_LENGTH bytes (e.g., 32)
+  const recipientsConcat = new Uint8Array(/* pk1||pk2||... */);
+
+  const result = wasm_simplpedpop_contribute_all(keypairBytes, threshold, recipientsConcat);
+  // result is a Uint8Array
+  console.log('contribute_all result bytes:', result);
+}
 
 const WEBRTC_CODE = WebRTC.code
 
@@ -75,6 +95,15 @@ async function connectToRelay() {
 }
 
 connectToRelay()
+
+// Test call for WASM function on startup
+try {
+  appendOutput('Calling contributeAllExample()...')
+  contributeAllExample()
+  appendOutput('contributeAllExample() returned successfully')
+} catch (e) {
+  appendOutput('contributeAllExample() threw: ' + (e?.message || String(e)))
+}
 
 function updateConnList() {
   const connListEls = node.getConnections().map((connection) => {
