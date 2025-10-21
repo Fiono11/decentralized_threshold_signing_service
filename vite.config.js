@@ -6,7 +6,7 @@ export default {
     esbuildOptions: { target: 'es2022', supported: { bigint: true } }
   },
   server: {
-    host: '0.0.0.0', // Allow external connections
+    host: '127.0.0.1', // Localhost only
     port: 5173, // Default Vite port
     open: false, // Don't automatically open browser
     cors: true // Enable CORS for cross-origin requests

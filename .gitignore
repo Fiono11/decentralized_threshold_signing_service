@@ -3,3 +3,4 @@ dist/
 test-results/
 olaf/target/
 olaf/pkg/
+playwright-report/

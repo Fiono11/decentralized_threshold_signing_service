@@ -9,11 +9,7 @@
     "build": "vite build",
     "relay": "node relay.js",
     "test": "npm run build && playwright test test",
-    "test:wasm": "npm run build && playwright test test/wasm-integration.spec.js",
-    "test:wasm:simple": "node test-wasm.js",
     "test:docker": "docker compose run --no-deps test",
-    "test:docker:wasm": "docker compose run --rm test npm run test:wasm",
-    "test:docker:all": "docker compose run --rm test npm run test",
     "test:cleanup": "docker container prune -f && docker image prune -f",
     "test:full": "npm run test:docker && npm run test:cleanup",
     "docker:cleanup": "docker compose down --rmi all --volumes --remove-orphans && docker system prune -f"
