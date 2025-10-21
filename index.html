@@ -68,6 +68,16 @@
       <button id="connect-via-address">Find Peer & Connect</button>
     </div>
 
+    <!-- WASM Threshold Signing Section -->
+    <div class="ss58-section">
+      <h3>🔐 Threshold Signing (SimplPedPop)</h3>
+      <label for="secret-key-input">Secret Key (hex format):</label>
+      <input type="text" id="secret-key-input"
+        placeholder="Enter secret key in hex format (e.g., 0x473a77675b8e77d90c1b6dc2dbe6ac533b0853790ea8bcadf0ee8b5da4cfbbce)" />
+      <button id="generate-all-message">Generate AllMessage</button>
+      <div id="all-message-output" style="margin-top: 10px; font-family: monospace; word-break: break-all;"></div>
+    </div>
+
     <!-- Active Connections Display -->
     <div id="connectionsWrapper">
       <h3>Active Connections:</h3>

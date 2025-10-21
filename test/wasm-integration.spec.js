@@ -29,6 +29,28 @@ test.describe('WASM Integration Tests for Olaf Threshold Public Key Generation:'
         await page.waitForFunction(() => window.wasmReady === true, { timeout: 30000 })
     })
 
+    test('should correctly convert secret key to SS58 address', async ({ page }) => {
+        const result = await page.evaluate(({ secretKey, expectedAddress }) => {
+            const derivedAddress = window.secretKeyToSS58Address(secretKey)
+            return {
+                derivedAddress,
+                expectedAddress,
+                match: derivedAddress === expectedAddress
+            }
+        }, {
+            secretKey: TEST_SECRET_KEY_1,
+            expectedAddress: TEST_RECIPIENTS[0]
+        })
+
+        expect(result.match).toBe(true)
+        expect(result.derivedAddress).toBe(result.expectedAddress)
+
+        console.log(`Secret key: ${TEST_SECRET_KEY_1}`)
+        console.log(`Expected address: ${result.expectedAddress}`)
+        console.log(`Derived address: ${result.derivedAddress}`)
+        console.log(`Match: ${result.match}`)
+    })
+
     test('should successfully generate AllMessage for participant 1', async ({ page }) => {
         const result = await page.evaluate(({ secretKey, recipients, threshold }) => {
             const keypairBytes = window.createKeypairBytes(secretKey)

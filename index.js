@@ -14,7 +14,7 @@ import { byteStream } from 'it-byte-stream'
 import { createLibp2p } from 'libp2p'
 import { fromString, toString } from 'uint8arrays'
 import { decodeAddress, encodeAddress } from '@polkadot/keyring'
-import initOlaf, { wasm_simplpedpop_contribute_all, wasm_keypair_from_secret } from './olaf/pkg/olaf.js';
+import initOlaf, { wasm_simplpedpop_contribute_all, wasm_keypair_from_secret, wasm_secret_key_to_ss58_address } from './olaf/pkg/olaf.js';
 
 // Initialize the WASM module once at startup
 await initOlaf();
@@ -22,6 +22,7 @@ await initOlaf();
 // Expose WASM functions globally for testing
 window.wasm_simplpedpop_contribute_all = wasm_simplpedpop_contribute_all;
 window.wasm_keypair_from_secret = wasm_keypair_from_secret;
+window.wasm_secret_key_to_ss58_address = wasm_secret_key_to_ss58_address;
 window.wasmReady = true;
 
 // Expose helper functions for testing
@@ -48,6 +49,12 @@ window.createKeypairBytes = function (secretKeyHex) {
 
   // Use the WASM function to generate a proper keypair from the secret key
   return window.wasm_keypair_from_secret(secretKeyBytes);
+};
+
+window.secretKeyToSS58Address = function (secretKeyHex) {
+  const secretKeyBytes = window.hexToUint8Array(secretKeyHex);
+  // Use the WASM function to convert secret key to SS58 address
+  return window.wasm_secret_key_to_ss58_address(secretKeyBytes);
 };
 
 // Example usage:
@@ -83,6 +90,7 @@ const KV_QUERY_PROTOCOL = '/libp2p/examples/kv-query/1.0.0'
 
 let ma
 let chatStream
+let connectedPeerSS58Address = null
 
 const node = await createLibp2p({
   addresses: {
@@ -339,7 +347,9 @@ window['connect-via-address'].onclick = async () => {
           const dialSignal = AbortSignal.timeout(10000)
           const ma = multiaddr(peerMultiaddr)
           await node.dial(ma, { signal: dialSignal })
+          connectedPeerSS58Address = polkadotAddress
           appendOutput('Connected to peer!')
+          appendOutput(`Peer SS58 address stored: ${polkadotAddress}`)
         } catch (dialError) {
           if (dialError.name === 'AbortError') {
             appendOutput('Connection timeout')
@@ -360,6 +370,107 @@ window['connect-via-address'].onclick = async () => {
     await stream.close()
   } catch (err) {
     appendOutput(`Error: ${err.message}`)
+  }
+}
+
+window['generate-all-message'].onclick = async () => {
+  const secretKeyHex = window['secret-key-input'].value.toString().trim()
+
+  if (!secretKeyHex) {
+    appendOutput('Please enter a secret key')
+    return
+  }
+
+  if (!connectedPeerSS58Address) {
+    appendOutput('Error: No connected peer. Please connect to a peer first using "Find Peer & Connect"')
+    return
+  }
+
+  try {
+    appendOutput('Generating AllMessage...')
+
+    // Step 1: Generate keypair from secret key
+    const keypairBytes = window.createKeypairBytes(secretKeyHex)
+    appendOutput(`Generated keypair: ${keypairBytes.length} bytes`)
+    appendOutput(`Keypair first 16 bytes: ${Array.from(keypairBytes.slice(0, 16)).map(b => b.toString(16).padStart(2, '0')).join(' ')}`)
+
+    // Step 2: Derive SS58 address from secret key using WASM function
+    // This calls wasm_secret_key_to_ss58_address internally
+    const ownSS58Address = window.secretKeyToSS58Address(secretKeyHex)
+    appendOutput(`Own SS58 address (derived from secret): ${ownSS58Address}`)
+    appendOutput(`Peer SS58 address (connected peer): ${connectedPeerSS58Address}`)
+
+    // Step 3: Convert both SS58 addresses to public key bytes
+    const ownPublicKeyBytes = window.ss58ToPublicKeyBytes(ownSS58Address)
+    const peerPublicKeyBytes = window.ss58ToPublicKeyBytes(connectedPeerSS58Address)
+
+    appendOutput(`Own public key: ${ownPublicKeyBytes.length} bytes - ${Array.from(ownPublicKeyBytes.slice(0, 8)).map(b => b.toString(16).padStart(2, '0')).join(' ')}`)
+    appendOutput(`Peer public key: ${peerPublicKeyBytes.length} bytes - ${Array.from(peerPublicKeyBytes.slice(0, 8)).map(b => b.toString(16).padStart(2, '0')).join(' ')}`)
+
+    // Step 4: Concatenate the public keys (own + peer)
+    // Recipients: [own public key, peer public key]
+    const recipientsConcat = new Uint8Array(ownPublicKeyBytes.length + peerPublicKeyBytes.length)
+    recipientsConcat.set(ownPublicKeyBytes, 0)
+    recipientsConcat.set(peerPublicKeyBytes, ownPublicKeyBytes.length)
+
+    appendOutput(`Recipients concatenated: ${recipientsConcat.length} bytes`)
+    appendOutput(`Recipients first 16 bytes: ${Array.from(recipientsConcat.slice(0, 16)).map(b => b.toString(16).padStart(2, '0')).join(' ')}`)
+
+    // Step 5: Call WASM function
+    const threshold = 2
+    appendOutput(`Calling WASM function with:`)
+    appendOutput(`  - keypairBytes: ${keypairBytes.length} bytes, type: ${keypairBytes.constructor.name}`)
+    appendOutput(`  - threshold: ${threshold}, type: ${typeof threshold}`)
+    appendOutput(`  - recipientsConcat: ${recipientsConcat.length} bytes, type: ${recipientsConcat.constructor.name}`)
+    appendOutput(`  - WASM function available: ${typeof window.wasm_simplpedpop_contribute_all}`)
+
+    let result
+    try {
+      result = window.wasm_simplpedpop_contribute_all(keypairBytes, threshold, recipientsConcat)
+    } catch (wasmError) {
+      appendOutput(`WASM function threw an exception:`)
+      appendOutput(`  - Error type: ${wasmError.constructor.name}`)
+      appendOutput(`  - Error as string: ${String(wasmError)}`)
+      appendOutput(`  - Error message: ${wasmError.message}`)
+      appendOutput(`  - Error stack: ${wasmError.stack}`)
+      appendOutput(`  - Error valueOf: ${wasmError.valueOf()}`)
+      appendOutput(`  - Error toString: ${wasmError.toString()}`)
+      throw new Error(`WASM error: ${String(wasmError)}`)
+    }
+
+    appendOutput(`Result type: ${typeof result}`)
+    appendOutput(`Result constructor: ${result ? result.constructor.name : 'null/undefined'}`)
+    appendOutput(`Result value: ${result}`)
+
+    if (!result) {
+      throw new Error('WASM function returned null or undefined')
+    }
+
+    // Step 6: Display result
+    appendOutput(`✓ AllMessage generated successfully: ${result.length} bytes`)
+
+    // Convert to hex for display
+    const hexResult = Array.from(result)
+      .map(b => b.toString(16).padStart(2, '0'))
+      .join('')
+
+    const outputDiv = document.getElementById('all-message-output')
+    outputDiv.innerHTML = `
+      <div style="background-color: #e8f5e9; padding: 10px; border-radius: 3px; margin-top: 5px;">
+        <strong>Result (${result.length} bytes):</strong><br/>
+        <div style="margin-top: 5px; font-size: 12px;">0x${hexResult}</div>
+      </div>
+    `
+
+    appendOutput(`First 16 bytes: ${Array.from(result.slice(0, 16)).map(b => b.toString(16).padStart(2, '0')).join(' ')}`)
+  } catch (err) {
+    appendOutput(`Error generating AllMessage: ${err.message}`)
+    const outputDiv = document.getElementById('all-message-output')
+    outputDiv.innerHTML = `
+      <div style="background-color: #ffebee; padding: 10px; border-radius: 3px; margin-top: 5px;">
+        <strong>Error:</strong> ${err.message}
+      </div>
+    `
   }
 }
 
