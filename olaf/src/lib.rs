@@ -1,7 +1,20 @@
 use js_sys::Uint8Array;
-use schnorrkel::{KEYPAIR_LENGTH, Keypair, PUBLIC_KEY_LENGTH, PublicKey};
+use schnorrkel::{KEYPAIR_LENGTH, Keypair, MiniSecretKey, PUBLIC_KEY_LENGTH, PublicKey};
 use wasm_bindgen::JsValue;
 use wasm_bindgen::prelude::wasm_bindgen;
+
+#[wasm_bindgen]
+pub fn wasm_keypair_from_secret(secret_key_bytes: &[u8]) -> Result<Uint8Array, JsValue> {
+    if secret_key_bytes.len() != 32 {
+        return Err(JsValue::from_str("invalid secret key length"));
+    }
+
+    let keypair = MiniSecretKey::from_bytes(secret_key_bytes)
+        .map_err(|_| JsValue::from_str("invalid secret key bytes"))?
+        .expand_to_keypair(schnorrkel::ExpansionMode::Ed25519);
+
+    Ok(Uint8Array::from(keypair.to_bytes().as_ref()))
+}
 
 #[wasm_bindgen]
 pub fn wasm_simplpedpop_contribute_all(

@@ -14,17 +14,48 @@ import { byteStream } from 'it-byte-stream'
 import { createLibp2p } from 'libp2p'
 import { fromString, toString } from 'uint8arrays'
 import { decodeAddress, encodeAddress } from '@polkadot/keyring'
-import initOlaf, { wasm_simplpedpop_contribute_all } from './olaf/pkg/olaf.js';
+import initOlaf, { wasm_simplpedpop_contribute_all, wasm_keypair_from_secret } from './olaf/pkg/olaf.js';
 
 // Initialize the WASM module once at startup
 await initOlaf();
 
+// Expose WASM functions globally for testing
+window.wasm_simplpedpop_contribute_all = wasm_simplpedpop_contribute_all;
+window.wasm_keypair_from_secret = wasm_keypair_from_secret;
+window.wasmReady = true;
+
+// Expose helper functions for testing
+window.ss58ToPublicKeyBytes = function (ss58Address) {
+  try {
+    const decoded = decodeAddress(ss58Address);
+    return new Uint8Array(decoded);
+  } catch (error) {
+    throw new Error(`Failed to decode SS58 address ${ss58Address}: ${error.message}`);
+  }
+};
+
+window.hexToUint8Array = function (hexString) {
+  const cleanHex = hexString.startsWith('0x') ? hexString.slice(2) : hexString;
+  const bytes = new Uint8Array(cleanHex.length / 2);
+  for (let i = 0; i < cleanHex.length; i += 2) {
+    bytes[i / 2] = parseInt(cleanHex.substring(i, i + 2), 16);
+  }
+  return bytes;
+};
+
+window.createKeypairBytes = function (secretKeyHex) {
+  const secretKeyBytes = window.hexToUint8Array(secretKeyHex);
+
+  // Use the WASM function to generate a proper keypair from the secret key
+  return window.wasm_keypair_from_secret(secretKeyBytes);
+};
+
 // Example usage:
 function contributeAllExample() {
-  // KEYPAIR_LENGTH must match schnorrkel’s size (e.g., 64 bytes)
+  // KEYPAIR_LENGTH must match schnorrkel's size (e.g., 64 bytes)
   const keypairBytes = new Uint8Array(/* your keypair bytes here */);
 
-  // threshold is a JS number; it’s converted to u16 in Rust
+  // threshold is a JS number; it's converted to u16 in Rust
   const threshold = 2;
 
   // recipients_concat is the concatenation of N schnorrkel public keys, each PUBLIC_KEY_LENGTH bytes (e.g., 32)
