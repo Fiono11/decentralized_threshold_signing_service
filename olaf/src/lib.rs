@@ -98,7 +98,6 @@ pub fn wasm_secret_key_to_ss58_address(secret_key_bytes: &[u8]) -> Result<String
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sp_core::{Pair, crypto::Ss58Codec, sr25519::Pair as Sr25519Pair};
 
     #[test]
     fn test_secret_key_to_ss58_address() {
@@ -122,8 +121,10 @@ mod tests {
         let sr25519_pair =
             Sr25519Pair::from_seed_slice(&secret_key_bytes).expect("Failed to create Sr25519Pair");
 
-        // Get the SS58 address (using Substrate network prefix 42)
-        let ss58_address = sr25519_pair.public().to_ss58check();
+        // Get the SS58 address using our ss58_encode function
+        let public_key = sr25519_pair.public();
+        let public_key_bytes: &[u8; 32] = public_key.as_ref();
+        let ss58_address = ss58_encode(public_key_bytes);
 
         // Assert the addresses match
         assert_eq!(
@@ -157,6 +158,43 @@ mod tests {
             ss58_address, expected_address,
             "SS58 address mismatch: got {}, expected {}",
             ss58_address, expected_address
+        );
+    }
+
+    #[test]
+    fn test_wasm_keypair_and_ss58_address_consistency() {
+        // Secret key as hex string (without 0x prefix)
+        let secret_key_hex = "473a77675b8e77d90c1b6dc2dbe6ac533b0853790ea8bcadf0ee8b5da4cfbbce";
+
+        // Decode hex to bytes
+        let secret_key_bytes =
+            hex::decode(secret_key_hex).expect("Failed to decode hex secret key");
+
+        // Method 1: Get SS58 address using Sr25519Pair (same as wasm_secret_key_to_ss58_address)
+        let sr25519_pair =
+            Sr25519Pair::from_seed_slice(&secret_key_bytes).expect("Failed to create Sr25519Pair");
+        let public_key_sr25519 = sr25519_pair.public();
+        let public_key_bytes_sr25519: &[u8; 32] = public_key_sr25519.as_ref();
+        let ss58_address_sr25519 = ss58_encode(public_key_bytes_sr25519);
+
+        // Method 2: Get keypair using schnorrkel (same as wasm_keypair_from_secret)
+        let keypair = MiniSecretKey::from_bytes(&secret_key_bytes)
+            .expect("Failed to create MiniSecretKey")
+            .expand_to_keypair(schnorrkel::ExpansionMode::Ed25519);
+        let public_key_bytes_schnorrkel: [u8; 32] = keypair.public.to_bytes();
+        let ss58_address_schnorrkel = ss58_encode(&public_key_bytes_schnorrkel);
+
+        // Assert both methods produce the same SS58 address
+        assert_eq!(
+            ss58_address_sr25519, ss58_address_schnorrkel,
+            "SS58 addresses should match: Sr25519Pair method returned {}, but schnorrkel method produced {}",
+            ss58_address_sr25519, ss58_address_schnorrkel
+        );
+
+        // Also verify the public keys are identical
+        assert_eq!(
+            public_key_bytes_sr25519, &public_key_bytes_schnorrkel,
+            "Public keys should be identical"
         );
     }
 }
