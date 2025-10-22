@@ -7,7 +7,6 @@ import { identify, identifyPush } from '@libp2p/identify'
 import { ping } from '@libp2p/ping'
 import { webRTC } from '@libp2p/webrtc'
 import { webSockets } from '@libp2p/websockets'
-import * as filters from '@libp2p/websockets/filters'
 import { multiaddr } from '@multiformats/multiaddr'
 import { WebRTC } from '@multiformats/multiaddr-matcher'
 import { byteStream } from 'it-byte-stream'
@@ -15,30 +14,61 @@ import { createLibp2p } from 'libp2p'
 import { fromString, toString } from 'uint8arrays'
 import { decodeAddress, encodeAddress } from '@polkadot/keyring'
 
+// Constants
 const WEBRTC_CODE = WebRTC.code
-
-const output = document.getElementById('output')
-const sendSection = document.getElementById('send-section')
-
-const appendOutput = (line) => {
-  const div = document.createElement('div')
-  div.appendChild(document.createTextNode(line))
-  output.append(div)
-}
-
 const CHAT_PROTOCOL = '/libp2p/examples/chat/1.0.0'
 const KV_PROTOCOL = '/libp2p/examples/kv/1.0.0'
 const KV_QUERY_PROTOCOL = '/libp2p/examples/kv-query/1.0.0'
+const CONNECTION_TIMEOUT = 10000
+const STREAM_TIMEOUT = 5000
+const CHAT_STREAM_TIMEOUT = 5000
 
-let ma
+// DOM Elements
+const output = document.getElementById('output')
+const sendSection = document.getElementById('send-section')
+
+// Global State
+let peerMultiaddr
 let chatStream
 
+// Utility Functions
+const appendOutput = (message) => {
+  const div = document.createElement('div')
+  div.appendChild(document.createTextNode(message))
+  output.append(div)
+}
+
+const isWebrtc = (multiaddr) => WebRTC.matches(multiaddr)
+
+const getRelayConnection = () => {
+  const connections = node.getConnections()
+  return connections.find(conn => !conn.remoteAddr.protoCodes().includes(WEBRTC_CODE))
+}
+
+const validatePolkadotAddress = (address) => {
+  if (!address || typeof address !== 'string') {
+    throw new Error('Invalid address: must be a non-empty string')
+  }
+
+  try {
+    const decoded = decodeAddress(address)
+    const reEncoded = encodeAddress(decoded)
+    if (address !== reEncoded) {
+      throw new Error('Address format is not canonical. Expected: ' + reEncoded)
+    }
+    return true
+  } catch (error) {
+    throw new Error(`Invalid SS58 address: ${error.message}`)
+  }
+}
+
+// LibP2P Node Configuration
 const node = await createLibp2p({
   addresses: {
     listen: ['/p2p-circuit', '/webrtc']
   },
   transports: [
-    webSockets({ filter: filters.all }),
+    webSockets(),
     webRTC(),
     circuitRelayTransport()
   ],
@@ -56,122 +86,166 @@ const node = await createLibp2p({
 
 await node.start()
 
+// Relay Configuration
 const HARDCODED_RELAY_ADDRESS = '/ip4/127.0.0.1/tcp/8080/ws/p2p/12D3KooWA1bysjrTACSWqf6q172inxvwKHUxAnBtVgaVDKMxpZtx'
 
-async function connectToRelay() {
+// Connection Management
+const connectToRelay = async () => {
   try {
-    appendOutput(`Connecting to relay...`)
-    const relayMa = multiaddr(HARDCODED_RELAY_ADDRESS)
-    const signal = AbortSignal.timeout(10000)
-    await node.dial(relayMa, { signal })
+    appendOutput('Connecting to relay...')
+    const relayMultiaddr = multiaddr(HARDCODED_RELAY_ADDRESS)
+    const signal = AbortSignal.timeout(CONNECTION_TIMEOUT)
+    await node.dial(relayMultiaddr, { signal })
     appendOutput('Connected to relay')
-  } catch (err) {
-    if (err.name === 'AbortError') {
+  } catch (error) {
+    if (error.name === 'AbortError') {
       appendOutput('Connection timeout')
     } else {
-      appendOutput(`Connection failed: ${err.message}`)
+      appendOutput(`Connection failed: ${error.message}`)
     }
   }
 }
 
+// Initialize connection to relay
 connectToRelay()
 
-function updateConnList() {
-  const connListEls = node.getConnections().map((connection) => {
+// UI Update Functions
+const updateConnList = () => {
+  const connectionElements = node.getConnections().map((connection) => {
     if (WebRTC.matches(connection.remoteAddr)) {
-      ma = connection.remoteAddr
+      peerMultiaddr = connection.remoteAddr
       sendSection.style.display = 'block'
     }
-    const el = document.createElement('li')
-    el.textContent = connection.remoteAddr.toString()
-    return el
+    const element = document.createElement('li')
+    element.textContent = connection.remoteAddr.toString()
+    return element
   })
-  document.getElementById('connections').replaceChildren(...connListEls)
+  document.getElementById('connections').replaceChildren(...connectionElements)
 }
 
+const updateMultiaddrs = () => {
+  const webrtcMultiaddrs = node.getMultiaddrs()
+    .filter(multiaddr => isWebrtc(multiaddr))
+    .map((multiaddr) => {
+      const element = document.createElement('li')
+      element.textContent = multiaddr.toString()
+      return element
+    })
+  document.getElementById('multiaddrs').replaceChildren(...webrtcMultiaddrs)
+}
+
+// Event Listeners
 node.addEventListener('connection:open', updateConnList)
 node.addEventListener('connection:close', updateConnList)
+node.addEventListener('self:peer:update', updateMultiaddrs)
 
-node.addEventListener('self:peer:update', (event) => {
-  const multiaddrs = node.getMultiaddrs()
-    .filter(ma => isWebrtc(ma))
-    .map((ma) => {
-      const el = document.createElement('li')
-      el.textContent = ma.toString()
-      return el
-    })
-  document.getElementById('multiaddrs').replaceChildren(...multiaddrs)
-})
-
+// Chat Protocol Handler
 node.handle(CHAT_PROTOCOL, async ({ stream }) => {
   chatStream = byteStream(stream)
   while (true) {
-    const buf = await chatStream.read()
-    if (buf === null) {
+    const buffer = await chatStream.read()
+    if (buffer === null) {
       break // End of stream
     }
-    appendOutput(`Received: '${toString(buf.subarray())}'`)
+    appendOutput(`Received: '${toString(buffer.subarray())}'`)
   }
 })
 
-const isWebrtc = (ma) => WebRTC.matches(ma)
-
-window.send.onclick = async () => {
+// Chat Stream Management
+const handleChatStream = async () => {
   if (chatStream == null) {
     appendOutput('Opening chat stream')
-    const signal = AbortSignal.timeout(5000)
+    const signal = AbortSignal.timeout(CHAT_STREAM_TIMEOUT)
     try {
-      const stream = await node.dialProtocol(ma, CHAT_PROTOCOL, { signal })
+      const stream = await node.dialProtocol(peerMultiaddr, CHAT_PROTOCOL, { signal })
       chatStream = byteStream(stream)
+
+      // Handle incoming messages
       Promise.resolve().then(async () => {
         while (true) {
-          const buf = await chatStream.read()
-          if (buf === null) {
+          const buffer = await chatStream.read()
+          if (buffer === null) {
             break // End of stream
           }
-          appendOutput(`Received: '${toString(buf.subarray())}'`)
+          appendOutput(`Received: '${toString(buffer.subarray())}'`)
         }
       })
-    } catch (err) {
+    } catch (error) {
       if (signal.aborted) {
         appendOutput('Chat stream timeout')
       } else {
-        appendOutput(`Chat stream failed: ${err.message}`)
+        appendOutput(`Chat stream failed: ${error.message}`)
       }
-      return
+      return false
     }
   }
+  return true
+}
+
+const sendMessage = async (message) => {
+  appendOutput(`Sending: '${message}'`)
+  try {
+    await chatStream.write(fromString(message))
+  } catch (error) {
+    appendOutput(`Send error: ${error.message}`)
+  }
+}
+
+// Send Button Handler
+window.send.onclick = async () => {
+  const streamReady = await handleChatStream()
+  if (!streamReady) return
 
   const message = window.message.value.toString().trim()
-  appendOutput(`Sending: '${message}'`)
-  chatStream.write(fromString(message))
-    .catch(err => {
-      appendOutput(`Send error: ${err.message}`)
-    })
+  await sendMessage(message)
 }
 
-const getRelayConnection = () => {
-  const connections = node.getConnections()
-  return connections.find(conn => !conn.remoteAddr.protoCodes().includes(WEBRTC_CODE))
+// Address Storage Functions
+const getWebrtcMultiaddr = () => {
+  const multiaddrs = node.getMultiaddrs()
+  return multiaddrs.find(multiaddr => WebRTC.matches(multiaddr))
 }
 
-function validatePolkadotAddress(address) {
-  if (!address || typeof address !== 'string') {
-    throw new Error('Invalid address: must be a non-empty string')
+const storeAddressInRelay = async (polkadotAddress, webrtcMultiaddr) => {
+  const relayConnection = getRelayConnection()
+  if (!relayConnection) {
+    throw new Error('No relay connection found')
   }
+
+  appendOutput('Storing address in relay...')
+  const stream = await node.dialProtocol(relayConnection.remoteAddr, KV_PROTOCOL, {
+    signal: AbortSignal.timeout(STREAM_TIMEOUT)
+  })
 
   try {
-    const decoded = decodeAddress(address)
-    const reEncoded = encodeAddress(decoded)
-    if (address !== reEncoded) {
-      throw new Error('Address format is not canonical. Expected: ' + reEncoded)
+    const streamWriter = byteStream(stream)
+    const streamReader = byteStream(stream)
+
+    const kvPair = { key: polkadotAddress, value: webrtcMultiaddr.toString() }
+    const message = JSON.stringify(kvPair)
+    appendOutput(`Storing: ${polkadotAddress} -> ${webrtcMultiaddr.toString()}`)
+
+    await streamWriter.write(fromString(message))
+    const response = await streamReader.read()
+
+    if (response === null) {
+      throw new Error('No response from relay')
     }
-    return true
-  } catch (error) {
-    throw new Error(`Invalid SS58 address: ${error.message}`)
+
+    const responseText = toString(response.subarray())
+    const parsed = JSON.parse(responseText)
+
+    if (parsed.success) {
+      appendOutput('Address stored successfully')
+    } else {
+      throw new Error(`Store failed: ${parsed.error}`)
+    }
+  } finally {
+    await stream.close()
   }
 }
 
+// Store Address Button Handler
 window['store-address-input'].onclick = async () => {
   const polkadotAddress = window['ss58-address-input'].value.toString().trim()
 
@@ -185,58 +259,77 @@ window['store-address-input'].onclick = async () => {
     validatePolkadotAddress(polkadotAddress)
     appendOutput(`Valid address: ${polkadotAddress}`)
 
-    const relayConnection = getRelayConnection()
-    if (!relayConnection) {
-      appendOutput('No relay connection found')
+    const webrtcMultiaddr = getWebrtcMultiaddr()
+    if (!webrtcMultiaddr) {
+      const availableMultiaddrs = node.getMultiaddrs().map(ma => ma.toString()).join(', ')
+      appendOutput(`No WebRTC address found. Available: ${availableMultiaddrs}`)
       return
     }
 
-    appendOutput('Storing address in relay...')
-    const stream = await node.dialProtocol(relayConnection.remoteAddr, KV_PROTOCOL, {
-      signal: AbortSignal.timeout(5000)
-    })
+    await storeAddressInRelay(polkadotAddress, webrtcMultiaddr)
+  } catch (error) {
+    appendOutput(`Error: ${error.message}`)
+  }
+}
+
+// Address Lookup Functions
+const queryRelayForAddress = async (polkadotAddress) => {
+  const relayConnection = getRelayConnection()
+  if (!relayConnection) {
+    throw new Error('No relay connection found')
+  }
+
+  const stream = await node.dialProtocol(relayConnection.remoteAddr, KV_QUERY_PROTOCOL, {
+    signal: AbortSignal.timeout(STREAM_TIMEOUT)
+  })
+
+  try {
     const streamWriter = byteStream(stream)
     const streamReader = byteStream(stream)
 
-    const multiaddrs = node.getMultiaddrs()
-    let webrtcMultiaddr = multiaddrs.find(ma => WebRTC.matches(ma))
-
-    if (!webrtcMultiaddr) {
-      appendOutput('No WebRTC address found. Available: ' + multiaddrs.map(ma => ma.toString()).join(', '))
-      await stream.close()
-      return
-    }
-
-    const kvPair = { key: polkadotAddress, value: webrtcMultiaddr.toString() }
-    const message = JSON.stringify(kvPair)
-    appendOutput(`Storing: ${polkadotAddress} -> ${webrtcMultiaddr.toString()}`)
+    const query = { action: 'get', key: polkadotAddress }
+    const message = JSON.stringify(query)
+    appendOutput('Querying relay...')
 
     await streamWriter.write(fromString(message))
     const response = await streamReader.read()
 
     if (response === null) {
-      appendOutput('No response from relay')
-      return
+      throw new Error('No response from relay')
     }
 
     const responseText = toString(response.subarray())
-    try {
-      const parsed = JSON.parse(responseText)
-      if (parsed.success) {
-        appendOutput('Address stored successfully')
-      } else {
-        appendOutput(`Store failed: ${parsed.error}`)
-      }
-    } catch (e) {
-      appendOutput(`Response parse error: ${e.message}`)
-    }
+    const parsed = JSON.parse(responseText)
 
+    if (parsed.success && parsed.found) {
+      return parsed.value
+    } else if (parsed.success && !parsed.found) {
+      throw new Error(`No peer found for: ${polkadotAddress}`)
+    } else {
+      throw new Error(`Query failed: ${parsed.error}`)
+    }
+  } finally {
     await stream.close()
-  } catch (err) {
-    appendOutput(`Error: ${err.message}`)
   }
 }
 
+const connectToPeer = async (peerMultiaddrString) => {
+  appendOutput('Connecting to peer...')
+  try {
+    const dialSignal = AbortSignal.timeout(CONNECTION_TIMEOUT)
+    const peerMultiaddr = multiaddr(peerMultiaddrString)
+    await node.dial(peerMultiaddr, { signal: dialSignal })
+    appendOutput('Connected to peer!')
+  } catch (error) {
+    if (error.name === 'AbortError') {
+      throw new Error('Connection timeout')
+    } else {
+      throw new Error(`Connection failed: ${error.message}`)
+    }
+  }
+}
+
+// Connect via Address Button Handler
 window['connect-via-address'].onclick = async () => {
   const polkadotAddress = window['ss58-address'].value.toString().trim()
 
@@ -247,65 +340,11 @@ window['connect-via-address'].onclick = async () => {
 
   try {
     appendOutput(`Looking up: ${polkadotAddress}`)
-    const relayConnection = getRelayConnection()
-    if (!relayConnection) {
-      appendOutput('No relay connection found')
-      return
-    }
-
-    const stream = await node.dialProtocol(relayConnection.remoteAddr, KV_QUERY_PROTOCOL, {
-      signal: AbortSignal.timeout(5000)
-    })
-    const streamWriter = byteStream(stream)
-    const streamReader = byteStream(stream)
-
-    const query = { action: 'get', key: polkadotAddress }
-    const message = JSON.stringify(query)
-    appendOutput(`Querying relay...`)
-
-    await streamWriter.write(fromString(message))
-    const response = await streamReader.read()
-
-    if (response === null) {
-      appendOutput('No response from relay')
-      await stream.close()
-      return
-    }
-
-    const responseText = toString(response.subarray())
-    try {
-      const parsed = JSON.parse(responseText)
-      if (parsed.success && parsed.found) {
-        const peerMultiaddr = parsed.value
-        appendOutput(`Found: ${peerMultiaddr}`)
-        appendOutput('Connecting to peer...')
-        await stream.close()
-
-        try {
-          const dialSignal = AbortSignal.timeout(10000)
-          const ma = multiaddr(peerMultiaddr)
-          await node.dial(ma, { signal: dialSignal })
-          appendOutput('Connected to peer!')
-        } catch (dialError) {
-          if (dialError.name === 'AbortError') {
-            appendOutput('Connection timeout')
-          } else {
-            appendOutput(`Connection failed: ${dialError.message}`)
-            appendOutput(`Multiaddress: ${peerMultiaddr}`)
-          }
-        }
-      } else if (parsed.success && !parsed.found) {
-        appendOutput(`No peer found for: ${polkadotAddress}`)
-      } else {
-        appendOutput(`Query failed: ${parsed.error}`)
-      }
-    } catch (e) {
-      appendOutput(`Response parse error: ${e.message}`)
-    }
-
-    await stream.close()
-  } catch (err) {
-    appendOutput(`Error: ${err.message}`)
+    const peerMultiaddrString = await queryRelayForAddress(polkadotAddress)
+    appendOutput(`Found: ${peerMultiaddrString}`)
+    await connectToPeer(peerMultiaddrString)
+  } catch (error) {
+    appendOutput(`Error: ${error.message}`)
   }
 }
 
