@@ -3,52 +3,71 @@
 import { setup, expect } from 'test-ipfs-example/browser'
 import { createRelayServer, setupRelayHandlers } from '../relay.js'
 
+// Test Configuration
 const test = setup()
 
-const messageInput = '#message'
-const sendBtn = '#send'
-const output = '#output'
-const ss58AddressInput = '#ss58-address-input'
-const storeAddressBtn = '#store-address-input'
-const ss58Address = '#ss58-address'
-const connectViaAddressBtn = '#connect-via-address'
+// DOM Selectors
+const SELECTORS = {
+  messageInput: '#message',
+  sendButton: '#send',
+  output: '#output',
+  ss58AddressInput: '#ss58-address-input',
+  storeAddressButton: '#store-address-input',
+  ss58Address: '#ss58-address',
+  connectViaAddressButton: '#connect-via-address'
+}
 
-let url
+// Test Constants
+const TEST_CONFIG = {
+  hardcodedPeerId: '12D3KooWA1bysjrTACSWqf6q172inxvwKHUxAnBtVgaVDKMxpZtx',
+  relayPort: '8080',
+  relayListenAddress: '/ip4/127.0.0.1/tcp/8080/ws',
+  testSS58AddressA: '5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY',
+  testSS58AddressB: '5FHneW46xGXgs5mUiveU4sbTyGBzmstUspZC92UhjJM694ty'
+}
 
-const TEST_SS58_ADDRESS_A = '5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY'
-const TEST_SS58_ADDRESS_B = '5FHneW46xGXgs5mUiveU4sbTyGBzmstUspZC92UhjJM694ty'
+// Test Timeouts
+const TIMEOUTS = {
+  beforeAll: 5 * 60_000, // 5 minutes
+  mainTest: 120_000, // 2 minutes
+  peerConnection: 60_000 // 1 minute
+}
 
-async function spawnRelay() {
-  const HARDCODED_PEER_ID = '12D3KooWA1bysjrTACSWqf6q172inxvwKHUxAnBtVgaVDKMxpZtx'
+// Global Test State
+let testUrl
+
+// Relay Server Management
+const createTestRelayServer = async () => {
   const testKvStore = new Map()
 
   const { server: relayNode, kvStore } = await createRelayServer({
-    peerIdString: HARDCODED_PEER_ID,
-    port: '8080',
-    listenAddresses: ['/ip4/127.0.0.1/tcp/8080/ws'],
+    peerIdString: TEST_CONFIG.hardcodedPeerId,
+    port: TEST_CONFIG.relayPort,
+    listenAddresses: [TEST_CONFIG.relayListenAddress],
     kvStore: testKvStore
   })
 
   setupRelayHandlers(relayNode, kvStore)
 
-  const relayNodeAddr = relayNode.getMultiaddrs()[0].toString()
-  console.log(`Test relay listening on: ${relayNodeAddr}`)
+  const relayNodeAddress = relayNode.getMultiaddrs()[0].toString()
+  console.log(`Test relay listening on: ${relayNodeAddress}`)
 
-  return { relayNode, relayNodeAddr }
+  return { relayNode, relayNodeAddress }
 }
 
+// Test Suite: Browser-to-Browser Communication
 test.describe('browser to browser example:', () => {
   let relayNode
-  let relayNodeAddr
+  let relayNodeAddress
 
-  // eslint-disable-next-line no-empty-pattern
+  // Test Setup and Teardown
   test.beforeAll(async ({ servers }, testInfo) => {
-    testInfo.setTimeout(5 * 60_000)
-    const r = await spawnRelay()
-    relayNode = r.relayNode
-    relayNodeAddr = r.relayNodeAddr
-    url = servers[0].url
-  }, {})
+    testInfo.setTimeout(TIMEOUTS.beforeAll)
+    const relayServer = await createTestRelayServer()
+    relayNode = relayServer.relayNode
+    relayNodeAddress = relayServer.relayNodeAddress
+    testUrl = servers[0].url
+  })
 
   test.afterAll(() => {
     if (relayNode) {
@@ -57,54 +76,71 @@ test.describe('browser to browser example:', () => {
   })
 
   test.beforeEach(async ({ page }) => {
-    await page.goto(url)
+    await page.goto(testUrl)
   })
 
+  // Main Integration Test
   test('should connect to another browser peer and send a message via SS58 addresses', async ({ page: pageA, context }) => {
-    test.setTimeout(120000)
+    test.setTimeout(TIMEOUTS.mainTest)
 
     const pageB = await context.newPage()
-    await pageB.goto(url)
+    await pageB.goto(testUrl)
 
+    // Establish relay connections for both pages
     await waitForRelayConnection(pageA)
     await waitForRelayConnection(pageB)
 
-    await storeSS58Address(pageA, TEST_SS58_ADDRESS_A)
-    await storeSS58Address(pageB, TEST_SS58_ADDRESS_B)
+    // Store SS58 addresses in the relay
+    await storeSS58Address(pageA, TEST_CONFIG.testSS58AddressA)
+    await storeSS58Address(pageB, TEST_CONFIG.testSS58AddressB)
 
-    await connectViaSS58Address(pageB, TEST_SS58_ADDRESS_A)
+    // Connect pageB to pageA via SS58 address
+    await connectViaSS58Address(pageB, TEST_CONFIG.testSS58AddressA)
 
+    // Test bidirectional messaging
     await sendMessage(pageA, pageB, 'hello B from A')
     await sendMessage(pageB, pageA, 'hello A from B')
   })
 })
 
-async function sendMessage(senderPage, recipientPage, message) {
-  await senderPage.waitForSelector(messageInput, { state: 'visible' })
-  await senderPage.fill(messageInput, message)
-  await senderPage.click(sendBtn)
-  await expect(senderPage.locator(output)).toContainText(`Sending: '${message}'`)
-  await expect(recipientPage.locator(output)).toContainText(`Received: '${message}'`)
+// Test Helper Functions
+
+// Message Communication Test
+const sendMessage = async (senderPage, recipientPage, message) => {
+  await senderPage.waitForSelector(SELECTORS.messageInput, { state: 'visible' })
+  await senderPage.fill(SELECTORS.messageInput, message)
+  await senderPage.click(SELECTORS.sendButton)
+
+  // Verify message was sent
+  await expect(senderPage.locator(SELECTORS.output)).toContainText(`Sending: '${message}'`)
+
+  // Verify message was received
+  await expect(recipientPage.locator(SELECTORS.output)).toContainText(`Received: '${message}'`)
 }
 
-async function waitForRelayConnection(page) {
-  const outputLocator = page.locator(output)
+// Relay Connection Verification
+const waitForRelayConnection = async (page) => {
+  const outputLocator = page.locator(SELECTORS.output)
   await expect(outputLocator).toContainText('Connected to relay')
 }
 
-async function storeSS58Address(page, addressToStore) {
-  await page.fill(ss58AddressInput, addressToStore)
-  await page.click(storeAddressBtn)
-  const outputLocator = page.locator(output)
+// SS58 Address Storage Test
+const storeSS58Address = async (page, addressToStore) => {
+  await page.fill(SELECTORS.ss58AddressInput, addressToStore)
+  await page.click(SELECTORS.storeAddressButton)
+
+  const outputLocator = page.locator(SELECTORS.output)
   await expect(outputLocator).toContainText(`Valid address: ${addressToStore}`)
   await expect(outputLocator).toContainText('Address stored successfully')
 }
 
-async function connectViaSS58Address(page, addressToConnect) {
-  await page.fill(ss58Address, addressToConnect)
-  await page.click(connectViaAddressBtn)
-  const outputLocator = page.locator(output)
+// SS58 Address Connection Test
+const connectViaSS58Address = async (page, addressToConnect) => {
+  await page.fill(SELECTORS.ss58Address, addressToConnect)
+  await page.click(SELECTORS.connectViaAddressButton)
+
+  const outputLocator = page.locator(SELECTORS.output)
   await expect(outputLocator).toContainText(`Looking up: ${addressToConnect}`)
   await expect(outputLocator).toContainText('Found:')
-  await expect(outputLocator).toContainText('Connected to peer!', { timeout: 60000 })
+  await expect(outputLocator).toContainText('Connected to peer!', { timeout: TIMEOUTS.peerConnection })
 }
