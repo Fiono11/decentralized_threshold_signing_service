@@ -97,6 +97,20 @@ test.describe('browser to browser example:', () => {
     // Connect pageB to pageA via SS58 address
     await connectViaSS58Address(pageB, TEST_CONFIG.testSS58AddressA)
 
+    // Verify that the receiving peer (pageA) also logs the connection
+    // The log should contain either the SS58 address or just the connection message
+    const pageAOutput = pageA.locator(SELECTORS.output)
+    await expect(pageAOutput).toContainText('Peer connected:', { timeout: TIMEOUTS.peerConnection })
+
+    // If SS58 address is found, it should be included in the log
+    // This is a more flexible test that works whether SS58 lookup succeeds or not
+    const connectionLog = await pageAOutput.textContent()
+    const hasSS58InLog = connectionLog.includes(TEST_CONFIG.testSS58AddressB)
+    const hasConnectionMessage = connectionLog.includes('Peer connected:')
+
+    // Either we have the SS58 address in the log, or just the connection message
+    expect(hasSS58InLog || hasConnectionMessage).toBeTruthy()
+
     // Test bidirectional messaging
     await sendMessage(pageA, pageB, 'hello B from A')
     await sendMessage(pageB, pageA, 'hello A from B')

@@ -30,6 +30,7 @@ const sendSection = document.getElementById('send-section')
 // Global State
 let peerMultiaddr
 let chatStream
+let mySS58Address = null
 
 // Utility Functions
 const appendOutput = (message) => {
@@ -135,8 +136,18 @@ const updateMultiaddrs = () => {
 }
 
 // Event Listeners
-node.addEventListener('connection:open', updateConnList)
-node.addEventListener('connection:close', updateConnList)
+node.addEventListener('connection:open', async (event) => {
+  const remoteAddr = event.detail.remoteAddr.toString()
+  const logMessage = `Peer connected: ${remoteAddr}`
+  appendOutput(logMessage)
+  updateConnList()
+})
+node.addEventListener('connection:close', async (event) => {
+  const remoteAddr = event.detail.remoteAddr.toString()
+  const logMessage = `Peer disconnected: ${remoteAddr}`
+  appendOutput(logMessage)
+  updateConnList()
+})
 node.addEventListener('self:peer:update', updateMultiaddrs)
 
 // Chat Protocol Handler
@@ -236,6 +247,7 @@ const storeAddressInRelay = async (polkadotAddress, webrtcMultiaddr) => {
     const parsed = JSON.parse(responseText)
 
     if (parsed.success) {
+      mySS58Address = polkadotAddress
       appendOutput('Address stored successfully')
     } else {
       throw new Error(`Store failed: ${parsed.error}`)
