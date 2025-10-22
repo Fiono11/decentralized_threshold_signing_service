@@ -75,6 +75,7 @@ const KV_QUERY_PROTOCOL = '/libp2p/examples/kv-query/1.0.0'
 let ma
 let chatStream
 let connectedPeerSS58Address = null
+let generatedAllMessage = null
 
 const node = await createLibp2p({
   addresses: {
@@ -421,7 +422,8 @@ window['generate-all-message'].onclick = async () => {
       throw new Error('WASM function returned null or undefined')
     }
 
-    // Step 6: Display result
+    // Step 6: Store the result and display it
+    generatedAllMessage = result
     appendOutput(`✓ AllMessage generated successfully: ${result.length} bytes`)
 
     // Convert to hex for display
@@ -437,6 +439,10 @@ window['generate-all-message'].onclick = async () => {
       </div>
     `
 
+    // Show the action buttons
+    const actionsDiv = document.getElementById('all-message-actions')
+    actionsDiv.style.display = 'block'
+
     appendOutput(`First 16 bytes: ${Array.from(result.slice(0, 16)).map(b => b.toString(16).padStart(2, '0')).join(' ')}`)
   } catch (err) {
     appendOutput(`Error generating AllMessage: ${err.message}`)
@@ -446,6 +452,128 @@ window['generate-all-message'].onclick = async () => {
         <strong>Error:</strong> ${err.message}
       </div>
     `
+  }
+}
+
+// Send AllMessage to connected peer
+window['send-all-message'].onclick = async () => {
+  if (!generatedAllMessage) {
+    appendOutput('Error: No AllMessage generated. Please generate an AllMessage first.')
+    return
+  }
+
+  if (!connectedPeerSS58Address) {
+    appendOutput('Error: No connected peer. Please connect to a peer first using "Find Peer & Connect"')
+    return
+  }
+
+  try {
+    appendOutput('Sending AllMessage to connected peer...')
+
+    // Ensure chat stream is open
+    if (chatStream == null) {
+      appendOutput('Opening chat stream to peer...')
+      const signal = AbortSignal.timeout(5000)
+      try {
+        const stream = await node.dialProtocol(ma, CHAT_PROTOCOL, { signal })
+        chatStream = byteStream(stream)
+        Promise.resolve().then(async () => {
+          while (true) {
+            const buf = await chatStream.read()
+            appendOutput(`Received: '${toString(buf.subarray())}'`)
+          }
+        })
+      } catch (err) {
+        if (signal.aborted) {
+          appendOutput('Chat stream timeout')
+        } else {
+          appendOutput(`Chat stream failed: ${err.message}`)
+        }
+        return
+      }
+    }
+
+    // Convert AllMessage to hex string for transmission
+    const hexMessage = Array.from(generatedAllMessage)
+      .map(b => b.toString(16).padStart(2, '0'))
+      .join('')
+
+    const messageToSend = `ALL_MESSAGE:${hexMessage}`
+    appendOutput(`Sending AllMessage (${generatedAllMessage.length} bytes) to peer: ${connectedPeerSS58Address}`)
+
+    await chatStream.write(fromString(messageToSend))
+    appendOutput('✓ AllMessage sent successfully to connected peer!')
+
+  } catch (err) {
+    appendOutput(`Error sending AllMessage: ${err.message}`)
+  }
+}
+
+// Store AllMessage in relay server
+window['store-all-message'].onclick = async () => {
+  if (!generatedAllMessage) {
+    appendOutput('Error: No AllMessage generated. Please generate an AllMessage first.')
+    return
+  }
+
+  if (!connectedPeerSS58Address) {
+    appendOutput('Error: No connected peer. Please connect to a peer first using "Find Peer & Connect"')
+    return
+  }
+
+  try {
+    appendOutput('Storing AllMessage in relay server...')
+
+    const relayConnection = getRelayConnection()
+    if (!relayConnection) {
+      appendOutput('No relay connection found')
+      return
+    }
+
+    const stream = await node.dialProtocol(relayConnection.remoteAddr, KV_PROTOCOL, {
+      signal: AbortSignal.timeout(5000)
+    })
+    const streamWriter = byteStream(stream)
+    const streamReader = byteStream(stream)
+
+    // Create a unique key for the AllMessage using both peer addresses
+    const ownSS58Address = window.secretKeyToSS58Address(window['secret-key-input'].value.toString().trim())
+    const allMessageKey = `all_message_${ownSS58Address}_${connectedPeerSS58Address}`
+
+    // Convert AllMessage to hex string for storage
+    const hexMessage = Array.from(generatedAllMessage)
+      .map(b => b.toString(16).padStart(2, '0'))
+      .join('')
+
+    const kvPair = { key: allMessageKey, value: hexMessage }
+    const message = JSON.stringify(kvPair)
+    appendOutput(`Storing AllMessage with key: ${allMessageKey}`)
+
+    await streamWriter.write(fromString(message))
+    const response = await streamReader.read()
+
+    if (response === null) {
+      appendOutput('No response from relay')
+      return
+    }
+
+    const responseText = toString(response.subarray())
+    try {
+      const parsed = JSON.parse(responseText)
+      if (parsed.success) {
+        appendOutput('✓ AllMessage stored successfully in relay server!')
+        appendOutput(`Key: ${allMessageKey}`)
+        appendOutput(`Size: ${generatedAllMessage.length} bytes`)
+      } else {
+        appendOutput(`Store failed: ${parsed.error}`)
+      }
+    } catch (e) {
+      appendOutput(`Response parse error: ${e.message}`)
+    }
+
+    await stream.close()
+  } catch (err) {
+    appendOutput(`Error storing AllMessage: ${err.message}`)
   }
 }
 
