@@ -1,16 +1,7 @@
 // Browser Integration Tests for Decentralized Threshold Signing Service
 
-import { noise } from '@chainsafe/libp2p-noise'
-import { yamux } from '@chainsafe/libp2p-yamux'
-import { circuitRelayServer } from '@libp2p/circuit-relay-v2'
-import { identify } from '@libp2p/identify'
-import { webSockets } from '@libp2p/websockets'
-import * as filters from '@libp2p/websockets/filters'
-import { createLibp2p } from 'libp2p'
 import { setup, expect } from 'test-ipfs-example/browser'
-import { byteStream } from 'it-byte-stream'
-import { fromString, toString } from 'uint8arrays'
-import { peerIdFromString } from '@libp2p/peer-id'
+import { createRelayServer, setupRelayHandlers } from '../relay.js'
 
 const test = setup()
 
@@ -24,114 +15,21 @@ const connectViaAddressBtn = '#connect-via-address'
 
 let url
 
-const KV_PROTOCOL = '/libp2p/examples/kv/1.0.0'
-const KV_QUERY_PROTOCOL = '/libp2p/examples/kv-query/1.0.0'
-
 const TEST_SS58_ADDRESS_A = '5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY'
 const TEST_SS58_ADDRESS_B = '5FHneW46xGXgs5mUiveU4sbTyGBzmstUspZC92UhjJM694ty'
 
 async function spawnRelay() {
   const HARDCODED_PEER_ID = '12D3KooWA1bysjrTACSWqf6q172inxvwKHUxAnBtVgaVDKMxpZtx'
-  const peerId = await peerIdFromString(HARDCODED_PEER_ID)
+  const testKvStore = new Map()
 
-  const relayNode = await createLibp2p({
-    peerId,
-    addresses: {
-      listen: ['/ip4/127.0.0.1/tcp/8080/ws']
-    },
-    transports: [webSockets({ filter: filters.all })],
-    connectionEncrypters: [noise()],
-    streamMuxers: [yamux()],
-    services: {
-      identify: identify(),
-      relay: circuitRelayServer({
-        reservations: { maxReservations: Infinity }
-      })
-    }
+  const { server: relayNode, kvStore } = await createRelayServer({
+    peerIdString: HARDCODED_PEER_ID,
+    port: '8080',
+    listenAddresses: ['/ip4/127.0.0.1/tcp/8080/ws'],
+    kvStore: testKvStore
   })
 
-  const kvStore = new Map()
-
-  relayNode.handle(KV_PROTOCOL, async ({ stream, connection }) => {
-    const streamReader = byteStream(stream)
-    const streamWriter = byteStream(stream)
-
-    try {
-      while (true) {
-        const data = await streamReader.read()
-        const message = toString(data.subarray())
-
-        try {
-          const kvPair = JSON.parse(message)
-          if (kvPair.key && kvPair.value !== undefined) {
-            const storageData = {
-              value: kvPair.value,
-              circuitRelay: kvPair.circuitRelay || null
-            }
-            kvStore.set(kvPair.key, JSON.stringify(storageData))
-            const response = { success: true, message: 'Stored successfully' }
-            await streamWriter.write(fromString(JSON.stringify(response)))
-          } else {
-            const response = { success: false, error: 'Invalid format' }
-            await streamWriter.write(fromString(JSON.stringify(response)))
-          }
-        } catch (parseError) {
-          const response = { success: false, error: 'Invalid JSON' }
-          await streamWriter.write(fromString(JSON.stringify(response)))
-        }
-      }
-    } catch (error) { }
-  })
-
-  relayNode.handle(KV_QUERY_PROTOCOL, async ({ stream, connection }) => {
-    const streamReader = byteStream(stream)
-    const streamWriter = byteStream(stream)
-
-    try {
-      while (true) {
-        const data = await streamReader.read()
-        const message = toString(data.subarray())
-
-        try {
-          const query = JSON.parse(message)
-
-          if (query.action === 'get' && query.key) {
-            const storedData = kvStore.get(query.key)
-            let value = null
-            let circuitRelay = null
-            let found = false
-
-            if (storedData !== undefined) {
-              try {
-                const parsed = JSON.parse(storedData)
-                value = parsed.value
-                circuitRelay = parsed.circuitRelay
-                found = true
-              } catch (e) {
-                value = storedData
-                found = true
-              }
-            }
-
-            const response = {
-              success: true,
-              key: query.key,
-              value: value,
-              circuitRelay: circuitRelay,
-              found: found
-            }
-            await streamWriter.write(fromString(JSON.stringify(response)))
-          } else {
-            const response = { success: false, error: 'Invalid format' }
-            await streamWriter.write(fromString(JSON.stringify(response)))
-          }
-        } catch (parseError) {
-          const response = { success: false, error: 'Invalid JSON' }
-          await streamWriter.write(fromString(JSON.stringify(response)))
-        }
-      }
-    } catch (error) { }
-  })
+  setupRelayHandlers(relayNode, kvStore)
 
   const relayNodeAddr = relayNode.getMultiaddrs()[0].toString()
   console.log(`Test relay listening on: ${relayNodeAddr}`)

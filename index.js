@@ -107,6 +107,9 @@ node.handle(CHAT_PROTOCOL, async ({ stream }) => {
   chatStream = byteStream(stream)
   while (true) {
     const buf = await chatStream.read()
+    if (buf === null) {
+      break // End of stream
+    }
     appendOutput(`Received: '${toString(buf.subarray())}'`)
   }
 })
@@ -123,6 +126,9 @@ window.send.onclick = async () => {
       Promise.resolve().then(async () => {
         while (true) {
           const buf = await chatStream.read()
+          if (buf === null) {
+            break // End of stream
+          }
           appendOutput(`Received: '${toString(buf.subarray())}'`)
         }
       })
