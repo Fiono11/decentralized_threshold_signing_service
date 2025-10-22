@@ -1,5 +1,6 @@
 use blake2::{Blake2b512, Digest};
 use js_sys::Uint8Array;
+use schnorrkel::olaf::simplpedpop::AllMessage;
 use schnorrkel::{KEYPAIR_LENGTH, Keypair, MiniSecretKey, PUBLIC_KEY_LENGTH, PublicKey};
 use sp_core::{Pair, sr25519::Pair as Sr25519Pair};
 use wasm_bindgen::JsValue;
@@ -93,6 +94,44 @@ pub fn wasm_secret_key_to_ss58_address(secret_key_bytes: &[u8]) -> Result<String
     let ss58_address = ss58_encode(public_key_bytes);
 
     Ok(ss58_address)
+}
+
+#[wasm_bindgen]
+pub fn wasm_simplpedpop_recipient_all(
+    keypair_bytes: &[u8],
+    all_messages_concat: &[u8],
+) -> Result<Uint8Array, JsValue> {
+    if keypair_bytes.len() != KEYPAIR_LENGTH {
+        return Err(JsValue::from_str("invalid keypair length"));
+    }
+
+    let keypair = Keypair::from_bytes(keypair_bytes)
+        .map_err(|_| JsValue::from_str("invalid keypair bytes"))?;
+
+    // Parse the concatenated AllMessage bytes
+    // First, we need to deserialize the JSON array of byte arrays
+    let all_messages_string = String::from_utf8(all_messages_concat.to_vec())
+        .map_err(|_| JsValue::from_str("invalid UTF-8 in all_messages_concat"))?;
+
+    let all_messages_bytes: Vec<Vec<u8>> =
+        serde_json::from_str(&all_messages_string).map_err(|e| {
+            JsValue::from_str(&format!("Failed to deserialize all_messages data: {}", e))
+        })?;
+
+    let all_messages: Vec<AllMessage> = all_messages_bytes
+        .iter()
+        .map(|all_message_bytes| {
+            AllMessage::from_bytes(all_message_bytes)
+                .map_err(|e| JsValue::from_str(&format!("Failed to parse AllMessage: {:?}", e)))
+        })
+        .collect::<Result<_, _>>()?;
+
+    let result = keypair
+        .simplpedpop_recipient_all(&all_messages)
+        .map_err(|e| JsValue::from_str(&format!("Failed to process AllMessages: {:?}", e)))?;
+
+    let bytes = result.0.spp_output().threshold_public_key().0.to_bytes();
+    Ok(Uint8Array::from(bytes.as_slice()))
 }
 
 #[cfg(test)]

@@ -14,7 +14,7 @@ import { byteStream } from 'it-byte-stream'
 import { createLibp2p } from 'libp2p'
 import { fromString, toString } from 'uint8arrays'
 import { decodeAddress, encodeAddress } from '@polkadot/keyring'
-import initOlaf, { wasm_simplpedpop_contribute_all, wasm_keypair_from_secret, wasm_secret_key_to_ss58_address } from './olaf/pkg/olaf.js';
+import initOlaf, { wasm_simplpedpop_contribute_all, wasm_keypair_from_secret, wasm_secret_key_to_ss58_address, wasm_simplpedpop_recipient_all } from './olaf/pkg/olaf.js';
 
 // Initialize the WASM module once at startup
 await initOlaf();
@@ -23,6 +23,7 @@ await initOlaf();
 window.wasm_simplpedpop_contribute_all = wasm_simplpedpop_contribute_all;
 window.wasm_keypair_from_secret = wasm_keypair_from_secret;
 window.wasm_secret_key_to_ss58_address = wasm_secret_key_to_ss58_address;
+window.wasm_simplpedpop_recipient_all = wasm_simplpedpop_recipient_all;
 window.wasmReady = true;
 
 // Expose helper functions for testing
@@ -76,6 +77,7 @@ let ma
 let chatStream
 let connectedPeerSS58Address = null
 let generatedAllMessage = null
+let receivedAllMessage = null
 
 const node = await createLibp2p({
   addresses: {
@@ -151,7 +153,19 @@ node.handle(CHAT_PROTOCOL, async ({ stream }) => {
   chatStream = byteStream(stream)
   while (true) {
     const buf = await chatStream.read()
-    appendOutput(`Received: '${toString(buf.subarray())}'`)
+    const message = toString(buf.subarray())
+    appendOutput(`Received: '${message}'`)
+
+    // Check if this is an AllMessage
+    if (message.startsWith('ALL_MESSAGE:')) {
+      const hexMessage = message.substring('ALL_MESSAGE:'.length)
+      try {
+        receivedAllMessage = window.hexToUint8Array(hexMessage)
+        appendOutput(`✓ AllMessage received and stored: ${receivedAllMessage.length} bytes`)
+      } catch (err) {
+        appendOutput(`Error parsing received AllMessage: ${err.message}`)
+      }
+    }
   }
 })
 
@@ -167,7 +181,19 @@ window.send.onclick = async () => {
       Promise.resolve().then(async () => {
         while (true) {
           const buf = await chatStream.read()
-          appendOutput(`Received: '${toString(buf.subarray())}'`)
+          const message = toString(buf.subarray())
+          appendOutput(`Received: '${message}'`)
+
+          // Check if this is an AllMessage
+          if (message.startsWith('ALL_MESSAGE:')) {
+            const hexMessage = message.substring('ALL_MESSAGE:'.length)
+            try {
+              receivedAllMessage = window.hexToUint8Array(hexMessage)
+              appendOutput(`✓ AllMessage received and stored: ${receivedAllMessage.length} bytes`)
+            } catch (err) {
+              appendOutput(`Error parsing received AllMessage: ${err.message}`)
+            }
+          }
         }
       })
     } catch (err) {
@@ -480,7 +506,19 @@ window['send-all-message'].onclick = async () => {
         Promise.resolve().then(async () => {
           while (true) {
             const buf = await chatStream.read()
-            appendOutput(`Received: '${toString(buf.subarray())}'`)
+            const message = toString(buf.subarray())
+            appendOutput(`Received: '${message}'`)
+
+            // Check if this is an AllMessage
+            if (message.startsWith('ALL_MESSAGE:')) {
+              const hexMessage = message.substring('ALL_MESSAGE:'.length)
+              try {
+                receivedAllMessage = window.hexToUint8Array(hexMessage)
+                appendOutput(`✓ AllMessage received and stored: ${receivedAllMessage.length} bytes`)
+              } catch (err) {
+                appendOutput(`Error parsing received AllMessage: ${err.message}`)
+              }
+            }
           }
         })
       } catch (err) {
@@ -576,4 +614,56 @@ window['store-all-message'].onclick = async () => {
     appendOutput(`Error storing AllMessage: ${err.message}`)
   }
 }
+
+// Process AllMessages to generate threshold key
+window['process-all-messages'].onclick = async () => {
+  if (!generatedAllMessage) {
+    appendOutput('Error: No AllMessage generated. Please generate an AllMessage first.')
+    return
+  }
+
+  if (!receivedAllMessage) {
+    appendOutput('Error: No AllMessage received from peer. Please ensure you have received an AllMessage from the connected peer.')
+    return
+  }
+
+  const secretKeyHex = window['secret-key-input'].value.toString().trim()
+  if (!secretKeyHex) {
+    appendOutput('Error: Please enter a secret key first.')
+    return
+  }
+
+  try {
+    appendOutput('Processing AllMessages to generate threshold key...')
+
+    // Generate keypair from secret key
+    const keypairBytes = window.createKeypairBytes(secretKeyHex)
+    appendOutput(`Generated keypair: ${keypairBytes.length} bytes`)
+
+    // Create JSON array of AllMessage bytes
+    const allMessagesArray = [
+      Array.from(generatedAllMessage),
+      Array.from(receivedAllMessage)
+    ]
+    const allMessagesJson = JSON.stringify(allMessagesArray)
+    const allMessagesBytes = new TextEncoder().encode(allMessagesJson)
+
+    appendOutput(`AllMessages JSON: ${allMessagesJson.length} characters`)
+    appendOutput(`Generated AllMessage: ${generatedAllMessage.length} bytes`)
+    appendOutput(`Received AllMessage: ${receivedAllMessage.length} bytes`)
+
+    // Call the WASM function
+    const thresholdKeyBytes = window.wasm_simplpedpop_recipient_all(keypairBytes, allMessagesBytes)
+
+    appendOutput(`✓ Threshold key generated successfully: ${thresholdKeyBytes.length} bytes`)
+    appendOutput(`Threshold key (hex): ${Array.from(thresholdKeyBytes).map(b => b.toString(16).padStart(2, '0')).join('')}`)
+    appendOutput(`Threshold key (first 16 bytes): ${Array.from(thresholdKeyBytes.slice(0, 16)).map(b => b.toString(16).padStart(2, '0')).join(' ')}`)
+
+  } catch (err) {
+    appendOutput(`Error processing AllMessages: ${err.message}`)
+    appendOutput(`Error details: ${err.stack || 'No stack trace available'}`)
+  }
+}
+
+
 

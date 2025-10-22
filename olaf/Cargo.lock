@@ -776,6 +776,7 @@ dependencies = [
  "hex",
  "js-sys",
  "schnorrkel 0.11.4",
+ "serde_json",
  "sp-core",
  "wasm-bindgen",
 ]

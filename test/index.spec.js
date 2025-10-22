@@ -314,4 +314,92 @@ test.describe('WASM Integration Tests for Olaf Threshold Public Key Generation:'
     console.log(`Generated AllMessage for participant 2: ${result.length} bytes`)
     console.log(`First 16 bytes: ${result.first16Bytes.map(b => b.toString(16).padStart(2, '0')).join(' ')}`)
   })
+
+  test('should produce identical threshold keys when both peers process AllMessages', async ({ page: pageA, context }) => {
+    test.setTimeout(120000)
+
+    const pageB = await context.newPage()
+    await pageB.goto(url)
+
+    // Wait for WASM to be ready on both pages
+    await pageA.waitForFunction(() => window.wasmReady === true, { timeout: 30000 })
+    await pageB.waitForFunction(() => window.wasmReady === true, { timeout: 30000 })
+
+    // Generate AllMessages for both participants
+    const allMessageA = await pageA.evaluate(({ secretKey, recipients, threshold }) => {
+      const keypairBytes = window.createKeypairBytes(secretKey)
+      const recipient1Bytes = window.ss58ToPublicKeyBytes(recipients[0])
+      const recipient2Bytes = window.ss58ToPublicKeyBytes(recipients[1])
+      const recipientsConcat = new Uint8Array(recipient1Bytes.length + recipient2Bytes.length)
+      recipientsConcat.set(recipient1Bytes, 0)
+      recipientsConcat.set(recipient2Bytes, recipient1Bytes.length)
+      return window.wasm_simplpedpop_contribute_all(keypairBytes, threshold, recipientsConcat)
+    }, { secretKey: TEST_SECRET_KEY_1, recipients: TEST_RECIPIENTS, threshold: 2 })
+
+    const allMessageB = await pageB.evaluate(({ secretKey, recipients, threshold }) => {
+      const keypairBytes = window.createKeypairBytes(secretKey)
+      const recipient1Bytes = window.ss58ToPublicKeyBytes(recipients[0])
+      const recipient2Bytes = window.ss58ToPublicKeyBytes(recipients[1])
+      const recipientsConcat = new Uint8Array(recipient1Bytes.length + recipient2Bytes.length)
+      recipientsConcat.set(recipient1Bytes, 0)
+      recipientsConcat.set(recipient2Bytes, recipient1Bytes.length)
+      return window.wasm_simplpedpop_contribute_all(keypairBytes, threshold, recipientsConcat)
+    }, { secretKey: TEST_SECRET_KEY_2, recipients: TEST_RECIPIENTS, threshold: 2 })
+
+    console.log(`AllMessage A: ${allMessageA.length} bytes`)
+    console.log(`AllMessage B: ${allMessageB.length} bytes`)
+
+    // Now test threshold key generation from both peers' perspectives
+    const thresholdKeyA = await pageA.evaluate(({ secretKey, allMessageA, allMessageB }) => {
+      const keypairBytes = window.createKeypairBytes(secretKey)
+
+      // Create JSON array of AllMessage bytes
+      const allMessagesArray = [
+        Array.from(allMessageA),
+        Array.from(allMessageB)
+      ]
+      const allMessagesJson = JSON.stringify(allMessagesArray)
+      const allMessagesBytes = new TextEncoder().encode(allMessagesJson)
+
+      return window.wasm_simplpedpop_recipient_all(keypairBytes, allMessagesBytes)
+    }, {
+      secretKey: TEST_SECRET_KEY_1,
+      allMessageA: Array.from(allMessageA),
+      allMessageB: Array.from(allMessageB)
+    })
+
+    const thresholdKeyB = await pageB.evaluate(({ secretKey, allMessageA, allMessageB }) => {
+      const keypairBytes = window.createKeypairBytes(secretKey)
+
+      // Create JSON array of AllMessage bytes
+      const allMessagesArray = [
+        Array.from(allMessageA),
+        Array.from(allMessageB)
+      ]
+      const allMessagesJson = JSON.stringify(allMessagesArray)
+      const allMessagesBytes = new TextEncoder().encode(allMessagesJson)
+
+      return window.wasm_simplpedpop_recipient_all(keypairBytes, allMessagesBytes)
+    }, {
+      secretKey: TEST_SECRET_KEY_2,
+      allMessageA: Array.from(allMessageA),
+      allMessageB: Array.from(allMessageB)
+    })
+
+    console.log(`Threshold key A: ${thresholdKeyA.length} bytes`)
+    console.log(`Threshold key B: ${thresholdKeyB.length} bytes`)
+
+    // Convert to arrays for comparison
+    const thresholdKeyABytes = Array.from(thresholdKeyA)
+    const thresholdKeyBBytes = Array.from(thresholdKeyB)
+
+    // Assert that both threshold keys are identical
+    expect(thresholdKeyABytes).toEqual(thresholdKeyBBytes)
+    expect(thresholdKeyA.length).toBe(thresholdKeyB.length)
+    expect(thresholdKeyA.length).toBeGreaterThan(0)
+
+    console.log(`✓ Threshold keys are identical: ${thresholdKeyA.length} bytes`)
+    console.log(`Threshold key (hex): ${thresholdKeyABytes.map(b => b.toString(16).padStart(2, '0')).join('')}`)
+    console.log(`Threshold key (first 16 bytes): ${thresholdKeyABytes.slice(0, 16).map(b => b.toString(16).padStart(2, '0')).join(' ')}`)
+  })
 })

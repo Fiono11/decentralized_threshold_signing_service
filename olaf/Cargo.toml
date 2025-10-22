@@ -14,6 +14,7 @@ js-sys = { version = "0.3.81" }
 sp-core = { version = "38.1.0", default-features = false, features = ["full_crypto"] }
 bs58 = { version = "0.5.1", default-features = false, features = ["alloc"] }
 blake2 = { version = "0.10.6", default-features = false }
+serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.2.16", features = ["js"] }
