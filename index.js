@@ -372,132 +372,138 @@ window['connect-via-address'].onclick = async () => {
 }
 
 window['generate-all-message'].onclick = async () => {
-  const secretKeyHex = window['secret-key-input'].value.toString().trim()
-
-  if (!secretKeyHex) {
-    appendOutput('Please enter a secret key')
-    return
-  }
-
-  if (!connectedPeerSS58Address) {
-    appendOutput('Error: No connected peer. Please connect to a peer first using "Find Peer & Connect"')
-    return
-  }
-
   try {
+    const secretKeyInput = window['secret-key-input'].value.toString().trim()
+    const recipientsInput = window['recipients-input'].value.toString().trim()
+    const thresholdInput = window['threshold-input'].value.toString().trim()
+
+    // Validate inputs
+    if (!secretKeyInput) {
+      appendOutput('Please enter a secret key')
+      return
+    }
+
+    if (!recipientsInput) {
+      appendOutput('Please enter recipient addresses')
+      return
+    }
+
+    if (!thresholdInput || isNaN(parseInt(thresholdInput)) || parseInt(thresholdInput) < 1) {
+      appendOutput('Please enter a valid threshold (must be >= 1)')
+      return
+    }
+
+    const threshold = parseInt(thresholdInput)
+    const recipients = recipientsInput.split(',').map(addr => addr.trim()).filter(addr => addr.length > 0)
+
+    if (recipients.length === 0) {
+      appendOutput('Please enter at least one recipient address')
+      return
+    }
+
     appendOutput('Generating AllMessage...')
+    appendOutput(`Secret key: ${secretKeyInput}`)
+    appendOutput(`Recipients: ${recipients.join(', ')}`)
+    appendOutput(`Threshold: ${threshold}`)
 
-    // Step 1: Generate keypair from secret key
-    const keypairBytes = window.createKeypairBytes(secretKeyHex)
-    appendOutput(`Generated keypair: ${keypairBytes.length} bytes`)
-    appendOutput(`Keypair first 16 bytes: ${Array.from(keypairBytes.slice(0, 16)).map(b => b.toString(16).padStart(2, '0')).join(' ')}`)
-
-    // Step 2: Extract public key from keypair and convert to SS58 address
-    const ownPublicKeyBytes = keypairBytes.slice(0, 32) // First 32 bytes are the public key
-    const ownSS58Address = encodeAddress(ownPublicKeyBytes, 42) // Convert to SS58
-    appendOutput(`Own SS58 address (derived from secret): ${ownSS58Address}`)
-    appendOutput(`Peer SS58 address (connected peer): ${connectedPeerSS58Address}`)
-
-    // Step 3: Convert peer SS58 address to public key bytes
-    const peerPublicKeyBytes = window.ss58ToPublicKeyBytes(connectedPeerSS58Address)
-
-    appendOutput(`Own public key: ${ownPublicKeyBytes.length} bytes - ${Array.from(ownPublicKeyBytes.slice(0, 8)).map(b => b.toString(16).padStart(2, '0')).join(' ')}`)
-    appendOutput(`Peer public key: ${peerPublicKeyBytes.length} bytes - ${Array.from(peerPublicKeyBytes.slice(0, 8)).map(b => b.toString(16).padStart(2, '0')).join(' ')}`)
-
-    // Step 4: Concatenate the public keys (own + peer)
-    // Recipients: [own public key, peer public key]
-    const recipientsConcat = new Uint8Array(ownPublicKeyBytes.length + peerPublicKeyBytes.length)
-    recipientsConcat.set(ownPublicKeyBytes, 0)
-    recipientsConcat.set(peerPublicKeyBytes, ownPublicKeyBytes.length)
-
-    appendOutput(`Recipients concatenated: ${recipientsConcat.length} bytes`)
-    appendOutput(`Recipients first 16 bytes: ${Array.from(recipientsConcat.slice(0, 16)).map(b => b.toString(16).padStart(2, '0')).join(' ')}`)
-
-    // Step 5: Call WASM function
-    const threshold = 2
-    appendOutput(`Calling WASM function with:`)
-    appendOutput(`  - keypairBytes: ${keypairBytes.length} bytes, type: ${keypairBytes.constructor.name}`)
-    appendOutput(`  - threshold: ${threshold}, type: ${typeof threshold}`)
-    appendOutput(`  - recipientsConcat: ${recipientsConcat.length} bytes, type: ${recipientsConcat.constructor.name}`)
-    appendOutput(`  - WASM function available: ${typeof window.wasm_simplpedpop_contribute_all}`)
-
-    let result
+    // Validate secret key format
+    let secretKeyBytes
     try {
-      result = window.wasm_simplpedpop_contribute_all(keypairBytes, threshold, recipientsConcat)
-    } catch (wasmError) {
-      appendOutput(`WASM function threw an exception:`)
-      appendOutput(`  - Error type: ${wasmError.constructor.name}`)
-      appendOutput(`  - Error as string: ${String(wasmError)}`)
-      appendOutput(`  - Error message: ${wasmError.message}`)
-      appendOutput(`  - Error stack: ${wasmError.stack}`)
-      appendOutput(`  - Error valueOf: ${wasmError.valueOf()}`)
-      appendOutput(`  - Error toString: ${wasmError.toString()}`)
-      throw new Error(`WASM error: ${String(wasmError)}`)
+      secretKeyBytes = window.hexToUint8Array(secretKeyInput)
+    } catch (err) {
+      appendOutput(`Invalid secret key format: ${err.message}`)
+      return
     }
 
-    appendOutput(`Result type: ${typeof result}`)
-    appendOutput(`Result constructor: ${result ? result.constructor.name : 'null/undefined'}`)
-    appendOutput(`Result value: ${result}`)
-
-    if (!result) {
-      throw new Error('WASM function returned null or undefined')
+    // Validate recipient addresses
+    for (const recipient of recipients) {
+      try {
+        validatePolkadotAddress(recipient)
+      } catch (err) {
+        appendOutput(`Invalid recipient address ${recipient}: ${err.message}`)
+        return
+      }
     }
 
-    // Step 6: Store the result and display it
-    generatedAllMessage = result
-    appendOutput(`✓ AllMessage generated successfully: ${result.length} bytes`)
+    // Create keypair from secret key
+    const keypairBytes = window.createKeypairBytes(secretKeyInput)
+    appendOutput(`Generated keypair: ${keypairBytes.length} bytes`)
 
-    // Convert to hex for display
-    const hexResult = Array.from(result)
-      .map(b => b.toString(16).padStart(2, '0'))
-      .join('')
+    // Convert recipients to concatenated public key bytes
+    const recipientBytes = recipients.map(recipient => {
+      return window.ss58ToPublicKeyBytes(recipient)
+    })
 
+    // Concatenate all recipient public keys
+    const totalLength = recipientBytes.reduce((sum, bytes) => sum + bytes.length, 0)
+    const recipientsConcat = new Uint8Array(totalLength)
+    let offset = 0
+    for (const bytes of recipientBytes) {
+      recipientsConcat.set(bytes, offset)
+      offset += bytes.length
+    }
+
+    appendOutput(`Concatenated recipients: ${recipientsConcat.length} bytes`)
+
+    // Call the WASM function to generate AllMessage
+    const allMessage = window.wasm_simplpedpop_contribute_all(keypairBytes, threshold, recipientsConcat)
+
+    appendOutput(`✓ AllMessage generated successfully: ${allMessage.length} bytes`)
+    appendOutput(`First 16 bytes: ${Array.from(allMessage.slice(0, 16)).map(b => b.toString(16).padStart(2, '0')).join(' ')}`)
+
+    // Store the generated AllMessage globally
+    generatedAllMessage = allMessage
+
+    // Display the AllMessage in hex format
+    const allMessageHex = Array.from(allMessage).map(b => b.toString(16).padStart(2, '0')).join('')
     const outputDiv = document.getElementById('all-message-output')
-    outputDiv.innerHTML = `
-      <div style="background-color: #e8f5e9; padding: 10px; border-radius: 3px; margin-top: 5px;">
-        <strong>Result (${result.length} bytes):</strong><br/>
-        <div style="margin-top: 5px; font-size: 12px;">0x${hexResult}</div>
-      </div>
-    `
+    outputDiv.textContent = `AllMessage (${allMessage.length} bytes): ${allMessageHex}`
 
-    // Show the action buttons
+    // Show action buttons
     const actionsDiv = document.getElementById('all-message-actions')
     actionsDiv.style.display = 'block'
 
-    appendOutput(`First 16 bytes: ${Array.from(result.slice(0, 16)).map(b => b.toString(16).padStart(2, '0')).join(' ')}`)
+    appendOutput('AllMessage ready for sending or storage')
+
   } catch (err) {
     appendOutput(`Error generating AllMessage: ${err.message}`)
-    const outputDiv = document.getElementById('all-message-output')
-    outputDiv.innerHTML = `
-      <div style="background-color: #ffebee; padding: 10px; border-radius: 3px; margin-top: 5px;">
-        <strong>Error:</strong> ${err.message}
-      </div>
-    `
+    console.error('Generate AllMessage error:', err)
   }
 }
 
 // Send AllMessage to connected peer
 window['send-all-message'].onclick = async () => {
-  if (!generatedAllMessage) {
-    appendOutput('Error: No AllMessage generated. Please generate an AllMessage first.')
-    return
-  }
-
-  if (!connectedPeerSS58Address) {
-    appendOutput('Error: No connected peer. Please connect to a peer first using "Find Peer & Connect"')
-    return
-  }
-
   try {
-    appendOutput('Sending AllMessage to connected peer...')
+    // Check if we have a generated AllMessage
+    if (!generatedAllMessage) {
+      appendOutput('No AllMessage generated. Please generate an AllMessage first.')
+      return
+    }
 
-    // Ensure chat stream is open
+    // Check if we have a connected peer
+    if (!ma) {
+      appendOutput('No peer connected. Please connect to a peer first.')
+      return
+    }
+
+    appendOutput('Sending AllMessage to connected peer...')
+    appendOutput(`AllMessage size: ${generatedAllMessage.length} bytes`)
+
+    // Convert AllMessage to hex string
+    const allMessageHex = Array.from(generatedAllMessage).map(b => b.toString(16).padStart(2, '0')).join('')
+    const messageToSend = `ALL_MESSAGE:${allMessageHex}`
+
+    appendOutput(`Sending: ${messageToSend.substring(0, 50)}...`)
+
+    // Ensure we have a chat stream
     if (chatStream == null) {
-      appendOutput('Opening chat stream to peer...')
+      appendOutput('Opening chat stream...')
       const signal = AbortSignal.timeout(5000)
       try {
         const stream = await node.dialProtocol(ma, CHAT_PROTOCOL, { signal })
         chatStream = byteStream(stream)
+
+        // Set up message listener
         Promise.resolve().then(async () => {
           while (true) {
             const buf = await chatStream.read()
@@ -526,120 +532,53 @@ window['send-all-message'].onclick = async () => {
       }
     }
 
-    // Convert AllMessage to hex string for transmission
-    const hexMessage = Array.from(generatedAllMessage)
-      .map(b => b.toString(16).padStart(2, '0'))
-      .join('')
-
-    const messageToSend = `ALL_MESSAGE:${hexMessage}`
-    appendOutput(`Sending AllMessage (${generatedAllMessage.length} bytes) to peer: ${connectedPeerSS58Address}`)
-
+    // Send the AllMessage
     await chatStream.write(fromString(messageToSend))
-    appendOutput('✓ AllMessage sent successfully to connected peer!')
+    appendOutput('✓ AllMessage sent successfully to connected peer')
+    appendOutput(`Recipient: ${connectedPeerSS58Address || 'Unknown peer'}`)
 
   } catch (err) {
     appendOutput(`Error sending AllMessage: ${err.message}`)
+    console.error('Send AllMessage error:', err)
   }
 }
 
 // Store AllMessage in relay server
 window['store-all-message'].onclick = async () => {
-  if (!generatedAllMessage) {
-    appendOutput('Error: No AllMessage generated. Please generate an AllMessage first.')
-    return
-  }
 
-  if (!connectedPeerSS58Address) {
-    appendOutput('Error: No connected peer. Please connect to a peer first using "Find Peer & Connect"')
-    return
-  }
-
-  try {
-    appendOutput('Storing AllMessage in relay server...')
-
-    const relayConnection = getRelayConnection()
-    if (!relayConnection) {
-      appendOutput('No relay connection found')
-      return
-    }
-
-    const stream = await node.dialProtocol(relayConnection.remoteAddr, KV_PROTOCOL, {
-      signal: AbortSignal.timeout(5000)
-    })
-    const streamWriter = byteStream(stream)
-    const streamReader = byteStream(stream)
-
-    // Create a unique key for the AllMessage using both peer addresses
-    const secretKeyHex = window['secret-key-input'].value.toString().trim()
-    const secretKeyBytes = window.hexToUint8Array(secretKeyHex)
-    const keypairBytes = window.wasm_keypair_from_secret(secretKeyBytes)
-    const ownPublicKeyBytes = keypairBytes.slice(0, 32) // First 32 bytes are the public key
-    const ownSS58Address = encodeAddress(ownPublicKeyBytes, 42) // Convert to SS58
-    const allMessageKey = `all_message_${ownSS58Address}_${connectedPeerSS58Address}`
-
-    // Convert AllMessage to hex string for storage
-    const hexMessage = Array.from(generatedAllMessage)
-      .map(b => b.toString(16).padStart(2, '0'))
-      .join('')
-
-    const kvPair = { key: allMessageKey, value: hexMessage }
-    const message = JSON.stringify(kvPair)
-    appendOutput(`Storing AllMessage with key: ${allMessageKey}`)
-
-    await streamWriter.write(fromString(message))
-    const response = await streamReader.read()
-
-    if (response === null) {
-      appendOutput('No response from relay')
-      return
-    }
-
-    const responseText = toString(response.subarray())
-    try {
-      const parsed = JSON.parse(responseText)
-      if (parsed.success) {
-        appendOutput('✓ AllMessage stored successfully in relay server!')
-        appendOutput(`Key: ${allMessageKey}`)
-        appendOutput(`Size: ${generatedAllMessage.length} bytes`)
-      } else {
-        appendOutput(`Store failed: ${parsed.error}`)
-      }
-    } catch (e) {
-      appendOutput(`Response parse error: ${e.message}`)
-    }
-
-    await stream.close()
-  } catch (err) {
-    appendOutput(`Error storing AllMessage: ${err.message}`)
-  }
 }
 
 // Process AllMessages to generate threshold key
 window['process-all-messages'].onclick = async () => {
-  if (!generatedAllMessage) {
-    appendOutput('Error: No AllMessage generated. Please generate an AllMessage first.')
-    return
-  }
-
-  if (!receivedAllMessage) {
-    appendOutput('Error: No AllMessage received from peer. Please ensure you have received an AllMessage from the connected peer.')
-    return
-  }
-
-  const secretKeyHex = window['secret-key-input'].value.toString().trim()
-  if (!secretKeyHex) {
-    appendOutput('Error: Please enter a secret key first.')
-    return
-  }
-
   try {
-    appendOutput('Processing AllMessages to generate threshold key...')
+    // Check if we have a generated AllMessage
+    if (!generatedAllMessage) {
+      appendOutput('No generated AllMessage found. Please generate an AllMessage first.')
+      return
+    }
 
-    // Generate keypair from secret key
-    const keypairBytes = window.createKeypairBytes(secretKeyHex)
+    // Check if we have a received AllMessage
+    if (!receivedAllMessage) {
+      appendOutput('No received AllMessage found. Please receive an AllMessage from another peer first.')
+      return
+    }
+
+    // Get the current secret key for keypair generation
+    const secretKeyInput = window['secret-key-input'].value.toString().trim()
+    if (!secretKeyInput) {
+      appendOutput('No secret key found. Please enter your secret key.')
+      return
+    }
+
+    appendOutput('Processing AllMessages to generate threshold key...')
+    appendOutput(`Generated AllMessage: ${generatedAllMessage.length} bytes`)
+    appendOutput(`Received AllMessage: ${receivedAllMessage.length} bytes`)
+
+    // Create keypair from secret key
+    const keypairBytes = window.createKeypairBytes(secretKeyInput)
     appendOutput(`Generated keypair: ${keypairBytes.length} bytes`)
 
-    // Create JSON array of AllMessage bytes
+    // Create JSON array of AllMessage bytes (following test pattern)
     const allMessagesArray = [
       Array.from(generatedAllMessage),
       Array.from(receivedAllMessage)
@@ -648,19 +587,57 @@ window['process-all-messages'].onclick = async () => {
     const allMessagesBytes = new TextEncoder().encode(allMessagesJson)
 
     appendOutput(`AllMessages JSON: ${allMessagesJson.length} characters`)
-    appendOutput(`Generated AllMessage: ${generatedAllMessage.length} bytes`)
-    appendOutput(`Received AllMessage: ${receivedAllMessage.length} bytes`)
+    appendOutput(`AllMessages bytes: ${allMessagesBytes.length} bytes`)
 
-    // Call the WASM function
-    const thresholdKeyBytes = window.wasm_simplpedpop_recipient_all(keypairBytes, allMessagesBytes)
+    // Call the WASM function to generate threshold key
+    appendOutput('Calling wasm_simplpedpop_recipient_all...')
+    const thresholdKey = window.wasm_simplpedpop_recipient_all(keypairBytes, allMessagesBytes)
 
-    appendOutput(`✓ Threshold key generated successfully: ${thresholdKeyBytes.length} bytes`)
-    appendOutput(`Threshold key (hex): ${Array.from(thresholdKeyBytes).map(b => b.toString(16).padStart(2, '0')).join('')}`)
-    appendOutput(`Threshold key (first 16 bytes): ${Array.from(thresholdKeyBytes.slice(0, 16)).map(b => b.toString(16).padStart(2, '0')).join(' ')}`)
+    appendOutput(`✓ Threshold key generated successfully: ${thresholdKey.length} bytes`)
+    appendOutput(`First 16 bytes: ${Array.from(thresholdKey.slice(0, 16)).map(b => b.toString(16).padStart(2, '0')).join(' ')}`)
+
+    // Convert to hex for display
+    const thresholdKeyHex = Array.from(thresholdKey).map(b => b.toString(16).padStart(2, '0')).join('')
+    appendOutput(`Threshold Public Key (hex): ${thresholdKeyHex}`)
+
+    // Store the threshold key globally for potential future use
+    window.generatedThresholdKey = thresholdKey
+
+    // Display the threshold key in a dedicated area
+    const thresholdKeyOutput = document.createElement('div')
+    thresholdKeyOutput.style.marginTop = '10px'
+    thresholdKeyOutput.style.padding = '10px'
+    thresholdKeyOutput.style.backgroundColor = '#e8f5e8'
+    thresholdKeyOutput.style.border = '1px solid #4caf50'
+    thresholdKeyOutput.style.borderRadius = '5px'
+    thresholdKeyOutput.style.fontFamily = 'monospace'
+    thresholdKeyOutput.style.wordBreak = 'break-all'
+    thresholdKeyOutput.innerHTML = `
+      <h4>🔐 Generated Threshold Public Key</h4>
+      <p><strong>Size:</strong> ${thresholdKey.length} bytes</p>
+      <p><strong>Hex:</strong> ${thresholdKeyHex}</p>
+      <p><strong>First 16 bytes:</strong> ${Array.from(thresholdKey.slice(0, 16)).map(b => b.toString(16).padStart(2, '0')).join(' ')}</p>
+    `
+
+    // Find the threshold signing section and append the result
+    const thresholdSection = document.querySelector('.ss58-section')
+    if (thresholdSection) {
+      // Remove any existing threshold key display
+      const existingDisplay = thresholdSection.querySelector('.threshold-key-display')
+      if (existingDisplay) {
+        existingDisplay.remove()
+      }
+
+      thresholdKeyOutput.className = 'threshold-key-display'
+      thresholdSection.appendChild(thresholdKeyOutput)
+    }
+
+    appendOutput('✓ Threshold key processing completed successfully!')
+    appendOutput('The threshold public key is now available for use in threshold signing operations.')
 
   } catch (err) {
     appendOutput(`Error processing AllMessages: ${err.message}`)
-    appendOutput(`Error details: ${err.stack || 'No stack trace available'}`)
+    console.error('Process AllMessages error:', err)
   }
 }
 

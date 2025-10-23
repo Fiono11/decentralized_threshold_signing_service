@@ -73,7 +73,16 @@
       <h3>🔐 Threshold Signing (SimplPedPop)</h3>
       <label for="secret-key-input">Secret Key (hex format):</label>
       <input type="text" id="secret-key-input"
-        placeholder="Enter secret key in hex format (e.g., 0x473a77675b8e77d90c1b6dc2dbe6ac533b0853790ea8bcadf0ee8b5da4cfbbce)" />
+        placeholder="Enter secret key in hex format (e.g., 0x473a77675b8e77d90c1b6dc2dbe6ac533b0853790ea8bcadf0ee8b5da4cfbbce)"
+        value="0x473a77675b8e77d90c1b6dc2dbe6ac533b0853790ea8bcadf0ee8b5da4cfbbce" />
+
+      <label for="recipients-input">Recipients (comma-separated SS58 addresses):</label>
+      <input type="text" id="recipients-input" placeholder="Enter recipient SS58 addresses separated by commas"
+        value="5CXkZyy4S5b3w16wvKA2hUwzp5q2y7UtRPkXnW97QGvDN8Jw,5Gma8SNsn6rkQf9reAWFQ9WKq8bwwHtSzwMYtLTdhYsGPKiy" />
+
+      <label for="threshold-input">Threshold:</label>
+      <input type="number" id="threshold-input" value="2" min="1" max="10" />
+
       <button id="generate-all-message">Generate AllMessage</button>
       <div id="all-message-output" style="margin-top: 10px; font-family: monospace; word-break: break-all;"></div>
       <div id="all-message-actions" style="margin-top: 10px; display: none;">
