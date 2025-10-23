@@ -14,7 +14,7 @@ import { byteStream } from 'it-byte-stream'
 import { createLibp2p } from 'libp2p'
 import { fromString, toString } from 'uint8arrays'
 import { decodeAddress, encodeAddress } from '@polkadot/keyring'
-import initOlaf, { wasm_simplpedpop_contribute_all, wasm_keypair_from_secret, wasm_secret_key_to_ss58_address, wasm_simplpedpop_recipient_all } from './olaf/pkg/olaf.js';
+import initOlaf, { wasm_simplpedpop_contribute_all, wasm_keypair_from_secret, wasm_simplpedpop_recipient_all } from './olaf/pkg/olaf.js';
 
 // Initialize the WASM module once at startup
 await initOlaf();
@@ -22,7 +22,6 @@ await initOlaf();
 // Expose WASM functions globally for testing
 window.wasm_simplpedpop_contribute_all = wasm_simplpedpop_contribute_all;
 window.wasm_keypair_from_secret = wasm_keypair_from_secret;
-window.wasm_secret_key_to_ss58_address = wasm_secret_key_to_ss58_address;
 window.wasm_simplpedpop_recipient_all = wasm_simplpedpop_recipient_all;
 window.wasmReady = true;
 
@@ -35,6 +34,8 @@ window.ss58ToPublicKeyBytes = function (ss58Address) {
     throw new Error(`Failed to decode SS58 address ${ss58Address}: ${error.message}`);
   }
 };
+
+window.encodeAddress = encodeAddress;
 
 window.hexToUint8Array = function (hexString) {
   const cleanHex = hexString.startsWith('0x') ? hexString.slice(2) : hexString;
@@ -52,11 +53,6 @@ window.createKeypairBytes = function (secretKeyHex) {
   return window.wasm_keypair_from_secret(secretKeyBytes);
 };
 
-window.secretKeyToSS58Address = function (secretKeyHex) {
-  const secretKeyBytes = window.hexToUint8Array(secretKeyHex);
-  // Use the WASM function to convert secret key to SS58 address
-  return window.wasm_secret_key_to_ss58_address(secretKeyBytes);
-};
 
 const WEBRTC_CODE = WebRTC.code
 
@@ -396,14 +392,13 @@ window['generate-all-message'].onclick = async () => {
     appendOutput(`Generated keypair: ${keypairBytes.length} bytes`)
     appendOutput(`Keypair first 16 bytes: ${Array.from(keypairBytes.slice(0, 16)).map(b => b.toString(16).padStart(2, '0')).join(' ')}`)
 
-    // Step 2: Derive SS58 address from secret key using WASM function
-    // This calls wasm_secret_key_to_ss58_address internally
-    const ownSS58Address = window.secretKeyToSS58Address(secretKeyHex)
+    // Step 2: Extract public key from keypair and convert to SS58 address
+    const ownPublicKeyBytes = keypairBytes.slice(0, 32) // First 32 bytes are the public key
+    const ownSS58Address = encodeAddress(ownPublicKeyBytes, 42) // Convert to SS58
     appendOutput(`Own SS58 address (derived from secret): ${ownSS58Address}`)
     appendOutput(`Peer SS58 address (connected peer): ${connectedPeerSS58Address}`)
 
-    // Step 3: Convert both SS58 addresses to public key bytes
-    const ownPublicKeyBytes = window.ss58ToPublicKeyBytes(ownSS58Address)
+    // Step 3: Convert peer SS58 address to public key bytes
     const peerPublicKeyBytes = window.ss58ToPublicKeyBytes(connectedPeerSS58Address)
 
     appendOutput(`Own public key: ${ownPublicKeyBytes.length} bytes - ${Array.from(ownPublicKeyBytes.slice(0, 8)).map(b => b.toString(16).padStart(2, '0')).join(' ')}`)
@@ -575,7 +570,11 @@ window['store-all-message'].onclick = async () => {
     const streamReader = byteStream(stream)
 
     // Create a unique key for the AllMessage using both peer addresses
-    const ownSS58Address = window.secretKeyToSS58Address(window['secret-key-input'].value.toString().trim())
+    const secretKeyHex = window['secret-key-input'].value.toString().trim()
+    const secretKeyBytes = window.hexToUint8Array(secretKeyHex)
+    const keypairBytes = window.wasm_keypair_from_secret(secretKeyBytes)
+    const ownPublicKeyBytes = keypairBytes.slice(0, 32) // First 32 bytes are the public key
+    const ownSS58Address = encodeAddress(ownPublicKeyBytes, 42) // Convert to SS58
     const allMessageKey = `all_message_${ownSS58Address}_${connectedPeerSS58Address}`
 
     // Convert AllMessage to hex string for storage

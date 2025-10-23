@@ -2,7 +2,7 @@ use blake2::{Blake2b512, Digest};
 use js_sys::Uint8Array;
 use schnorrkel::olaf::simplpedpop::AllMessage;
 use schnorrkel::{KEYPAIR_LENGTH, Keypair, MiniSecretKey, PUBLIC_KEY_LENGTH, PublicKey};
-use sp_core::{Pair, sr25519::Pair as Sr25519Pair};
+//use sp_core::{Pair, sr25519::Pair as Sr25519Pair};
 use wasm_bindgen::JsValue;
 use wasm_bindgen::prelude::wasm_bindgen;
 
@@ -76,25 +76,25 @@ pub fn wasm_simplpedpop_contribute_all(
     Ok(Uint8Array::from(bytes.as_slice()))
 }
 
-#[wasm_bindgen]
+/*#[wasm_bindgen]
 pub fn wasm_secret_key_to_ss58_address(secret_key_bytes: &[u8]) -> Result<String, JsValue> {
     if secret_key_bytes.len() != 32 {
         return Err(JsValue::from_str("invalid secret key length"));
     }
 
-    // Create Sr25519Pair from secret key
-    let sr25519_pair = Sr25519Pair::from_seed_slice(secret_key_bytes)
-        .map_err(|_| JsValue::from_str("invalid secret key bytes"))?;
+    // Create keypair from secret key using schnorrkel
+    let keypair = MiniSecretKey::from_bytes(secret_key_bytes)
+        .map_err(|_| JsValue::from_str("invalid secret key bytes"))?
+        .expand_to_keypair(schnorrkel::ExpansionMode::Ed25519);
 
     // Get the public key bytes
-    let public_key = sr25519_pair.public();
-    let public_key_bytes: &[u8; 32] = public_key.as_ref();
+    let public_key_bytes = keypair.public.to_bytes();
 
     // Convert public key to SS58 address (using Substrate network prefix 42)
-    let ss58_address = ss58_encode(public_key_bytes);
+    let ss58_address = ss58_encode(&public_key_bytes);
 
     Ok(ss58_address)
-}
+}*/
 
 #[wasm_bindgen]
 pub fn wasm_simplpedpop_recipient_all(
@@ -136,9 +136,11 @@ pub fn wasm_simplpedpop_recipient_all(
 
 #[cfg(test)]
 mod tests {
+    use schnorrkel::SecretKey;
+
     use super::*;
 
-    #[test]
+    /*#[test]
     fn test_secret_key_to_ss58_address() {
         // Secret key as hex string (without 0x prefix)
         let secret_key_hex = "473a77675b8e77d90c1b6dc2dbe6ac533b0853790ea8bcadf0ee8b5da4cfbbce";
@@ -171,9 +173,9 @@ mod tests {
             "SS58 address mismatch: got {}, expected {}",
             ss58_address, expected_address
         );
-    }
+    }*/
 
-    #[test]
+    /*#[test]
     fn test_wasm_secret_key_to_ss58_address() {
         // Secret key as hex string (without 0x prefix)
         let secret_key_hex = "473a77675b8e77d90c1b6dc2dbe6ac533b0853790ea8bcadf0ee8b5da4cfbbce";
@@ -198,9 +200,9 @@ mod tests {
             "SS58 address mismatch: got {}, expected {}",
             ss58_address, expected_address
         );
-    }
+    }*/
 
-    #[test]
+    /*#[test]
     fn test_wasm_keypair_and_ss58_address_consistency() {
         // Secret key as hex string (without 0x prefix)
         let secret_key_hex = "473a77675b8e77d90c1b6dc2dbe6ac533b0853790ea8bcadf0ee8b5da4cfbbce";
@@ -234,6 +236,159 @@ mod tests {
         assert_eq!(
             public_key_bytes_sr25519, &public_key_bytes_schnorrkel,
             "Public keys should be identical"
+        );
+    }*/
+
+    #[test]
+    fn test_simplpedpop_with_test_keys() {
+        use curve25519_dalek::Scalar;
+        use hex_literal::hex;
+
+        const TEST_SECRET_KEY_1: [u8; 32] =
+            hex!("473a77675b8e77d90c1b6dc2dbe6ac533b0853790ea8bcadf0ee8b5da4cfbbce");
+        const TEST_SECRET_KEY_2: [u8; 32] =
+            hex!("db9ddbb3d6671c4de8248a4fba95f3d873dc21a0434b52951bb33730c1ac93d7");
+
+        // Create keypairs from the test secret keys
+        let scalar1 = Scalar::from_bytes_mod_order(TEST_SECRET_KEY_1);
+        let scalar2 = Scalar::from_bytes_mod_order(TEST_SECRET_KEY_2);
+
+        let mut nonce1 = [0u8; 32];
+        let mut nonce2 = [0u8; 32];
+        //crate::getrandom_or_panic().fill_bytes(&mut nonce1);
+        //crate::getrandom_or_panic().fill_bytes(&mut nonce2);
+
+        let secret_key1 = SecretKey {
+            key: scalar1,
+            nonce: nonce1,
+        };
+        let secret_key2 = SecretKey {
+            key: scalar2,
+            nonce: nonce2,
+        };
+
+        let keypair1 = Keypair::from(secret_key1);
+        let keypair2 = Keypair::from(secret_key2);
+
+        // For this test, we'll use the keypairs as both contributors and recipients
+        let contributors = vec![keypair1.clone(), keypair2.clone()];
+        let recipients = vec![keypair1.public, keypair2.public];
+
+        let threshold = 2u16;
+        let participants = 2u16;
+
+        println!("Running SimplPedPoP protocol with test keys:");
+        println!("Threshold: {}", threshold);
+        println!("Participants: {}", participants);
+        println!(
+            "Contributor 1 public key: {:?}",
+            contributors[0].public.to_bytes()
+        );
+        println!(
+            "Contributor 2 public key: {:?}",
+            contributors[1].public.to_bytes()
+        );
+
+        // Generate messages from contributors
+        let mut all_messages = Vec::new();
+
+        for (i, contributor) in contributors.iter().enumerate() {
+            println!("\n--- Contributor {} ---", i + 1);
+            let message: AllMessage = contributor
+                .simplpedpop_contribute_all(threshold, recipients.clone())
+                .expect("Failed to create message");
+
+            println!(
+                "Message content sender: {:?}",
+                message.content.sender.to_bytes()
+            );
+            println!("Encryption nonce: {:?}", message.content.encryption_nonce);
+            println!(
+                "Parameters: participants={}, threshold={}",
+                message.content.parameters.participants, message.content.parameters.threshold
+            );
+            println!("Recipients hash: {:?}", message.content.recipients_hash);
+            println!(
+                "Polynomial commitment coefficients: {} points",
+                message
+                    .content
+                    .polynomial_commitment
+                    .coefficients_commitments
+                    .len()
+            );
+            println!(
+                "Encrypted secret shares: {} shares",
+                message.content.encrypted_secret_shares.len()
+            );
+            println!(
+                "Ephemeral key: {:?}",
+                message.content.ephemeral_key.to_bytes()
+            );
+            println!("Signature: {:?}", message.signature.to_bytes());
+            println!(
+                "Proof of possession: {:?}",
+                message.proof_of_possession.to_bytes()
+            );
+
+            all_messages.push(message);
+        }
+
+        // Process messages as recipients
+        let mut spp_outputs = Vec::new();
+
+        for (i, recipient) in contributors.iter().enumerate() {
+            println!("\n--- Recipient {} processing ---", i + 1);
+            let spp_output = recipient
+                .simplpedpop_recipient_all(&all_messages)
+                .expect("Failed to process messages");
+
+            spp_output.0.verify_signature().expect("Invalid signature");
+
+            println!("SPP Output signer: {:?}", spp_output.0.signer.0.to_bytes());
+            println!(
+                "SPP Output signature: {:?}",
+                spp_output.0.signature.to_bytes()
+            );
+            println!(
+                "Threshold public key: {:?}",
+                spp_output.0.spp_output.threshold_public_key.0.to_bytes()
+            );
+            println!(
+                "Verifying keys count: {}",
+                spp_output.0.spp_output.verifying_keys.len()
+            );
+
+            for (j, (id, verifying_share)) in
+                spp_output.0.spp_output.verifying_keys.iter().enumerate()
+            {
+                println!(
+                    "  Verifying key {}: ID={:?}, Share={:?}",
+                    j,
+                    id.0.to_bytes(),
+                    verifying_share.0.to_bytes()
+                );
+            }
+
+            spp_outputs.push(spp_output);
+        }
+
+        // Verify that all threshold_public_keys are equal
+        let threshold_pk = &spp_outputs[0].0.spp_output.threshold_public_key.0;
+        for (i, spp_output) in spp_outputs.iter().enumerate() {
+            assert_eq!(
+                threshold_pk.to_bytes(),
+                spp_output.0.spp_output.threshold_public_key.0.to_bytes(),
+                "Threshold public keys should be identical for recipient {}",
+                i
+            );
+        }
+
+        println!("\n=== FINAL RESULTS ===");
+        println!("Threshold Public Key: {:?}", threshold_pk.to_bytes());
+        println!("All messages processed successfully!");
+        println!(
+            "Protocol completed with {} participants and threshold {}",
+            participants, threshold
         );
     }
 }
