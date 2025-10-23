@@ -476,7 +476,8 @@ test.describe('WASM Integration Tests for Olaf Threshold Public Key Generation:'
         thresholdKey1Bytes.every((byte, index) => byte === thresholdKey2Bytes[index])
 
       console.log(`\n=== FINAL RESULTS ===`)
-      console.log(`Threshold Public Key: ${thresholdKey1Bytes.map(b => b.toString(16).padStart(2, '0')).join('')}`)
+      console.log(`Threshold Public Key (hex): ${thresholdKey1Bytes.map(b => b.toString(16).padStart(2, '0')).join('')}`)
+      console.log(`Threshold Public Key (hex, formatted): 0x${thresholdKey1Bytes.map(b => b.toString(16).padStart(2, '0')).join('')}`)
       console.log(`All messages processed successfully!`)
       console.log(`Protocol completed with 2 participants and threshold ${threshold}`)
       console.log(`Threshold keys match: ${keysMatch}`)
@@ -487,6 +488,8 @@ test.describe('WASM Integration Tests for Olaf Threshold Public Key Generation:'
         thresholdKey2Length: thresholdKey2.length,
         thresholdKey1Bytes,
         thresholdKey2Bytes,
+        thresholdKeyHex: thresholdKey1Bytes.map(b => b.toString(16).padStart(2, '0')).join(''),
+        thresholdKeyHexFormatted: '0x' + thresholdKey1Bytes.map(b => b.toString(16).padStart(2, '0')).join(''),
         allMessage1Length: allMessage1.length,
         allMessage2Length: allMessage2.length
       }
@@ -506,6 +509,8 @@ test.describe('WASM Integration Tests for Olaf Threshold Public Key Generation:'
 
     console.log(`✓ Complete SimplPedPoP protocol test passed`)
     console.log(`✓ Threshold keys are identical: ${result.thresholdKey1Length} bytes`)
+    console.log(`✓ Threshold Public Key (hex): ${result.thresholdKeyHex}`)
+    console.log(`✓ Threshold Public Key (hex, formatted): ${result.thresholdKeyHexFormatted}`)
     console.log(`✓ AllMessage 1: ${result.allMessage1Length} bytes`)
     console.log(`✓ AllMessage 2: ${result.allMessage2Length} bytes`)
   })
