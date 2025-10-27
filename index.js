@@ -541,6 +541,7 @@ window['send-all-message'].onclick = async () => {
     appendOutput(`Error sending AllMessage: ${err.message}`)
     console.error('Send AllMessage error:', err)
   }
+
 }
 
 // Store AllMessage in relay server
@@ -640,6 +641,7 @@ window['process-all-messages'].onclick = async () => {
     console.error('Process AllMessages error:', err)
   }
 }
+
 
 
 

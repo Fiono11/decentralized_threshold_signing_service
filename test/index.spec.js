@@ -235,32 +235,6 @@ test.describe('WASM Integration Tests for Olaf Threshold Public Key Generation:'
     await page.waitForFunction(() => window.wasmReady === true, { timeout: 30000 })
   })
 
-  /*test('should correctly convert secret key to SS58 address', async ({ page }) => {
-    const result = await page.evaluate(({ secretKey, expectedAddress }) => {
-      // Convert secret key to keypair and extract public key
-      const secretKeyBytes = window.hexToUint8Array(secretKey)
-      const keypairBytes = window.wasm_keypair_from_secret(secretKeyBytes)
-      const publicKeyBytes = keypairBytes.slice(0, 32) // First 32 bytes are the public key
-      const derivedAddress = window.encodeAddress(publicKeyBytes, 42) // Convert to SS58
-      return {
-        derivedAddress,
-        expectedAddress,
-        match: derivedAddress === expectedAddress
-      }
-    }, {
-      secretKey: TEST_SECRET_KEY_1,
-      expectedAddress: TEST_RECIPIENTS[0]
-    })
-
-    expect(result.match).toBe(true)
-    expect(result.derivedAddress).toBe(result.expectedAddress)
-
-    console.log(`Secret key: ${TEST_SECRET_KEY_1}`)
-    console.log(`Expected address: ${result.expectedAddress}`)
-    console.log(`Derived address: ${result.derivedAddress}`)
-    console.log(`Match: ${result.match}`)
-  })*/
-
   test('should successfully generate AllMessage for participant 1', async ({ page }) => {
     const result = await page.evaluate(({ secretKey, recipients, threshold }) => {
       const keypairBytes = window.createKeypairBytes(secretKey)
@@ -319,7 +293,7 @@ test.describe('WASM Integration Tests for Olaf Threshold Public Key Generation:'
     console.log(`First 16 bytes: ${result.first16Bytes.map(b => b.toString(16).padStart(2, '0')).join(' ')}`)
   })
 
-  /*test('should produce identical threshold keys when both peers process AllMessages', async ({ page: pageA, context }) => {
+  test('should produce identical threshold keys when both peers process AllMessages', async ({ page: pageA, context }) => {
     test.setTimeout(120000)
 
     const pageB = await context.newPage()
@@ -405,7 +379,7 @@ test.describe('WASM Integration Tests for Olaf Threshold Public Key Generation:'
     console.log(`✓ Threshold keys are identical: ${thresholdKeyA.length} bytes`)
     console.log(`Threshold key (hex): ${thresholdKeyABytes.map(b => b.toString(16).padStart(2, '0')).join('')}`)
     console.log(`Threshold key (first 16 bytes): ${thresholdKeyABytes.slice(0, 16).map(b => b.toString(16).padStart(2, '0')).join(' ')}`)
-  })*/
+  })
 
   test('should run complete SimplPedPoP protocol with test keys (port of Rust test)', async ({ page }) => {
     test.setTimeout(120000)
