@@ -10,6 +10,7 @@ const SELECTORS = {
   sendButton: '#send',
   output: '#output',
   ss58AddressInput: '#ss58-address-input',
+  secretKeyInput: '#secret-key-input',
   storeAddressButton: '#store-address-input',
   ss58Address: '#ss58-address',
   connectViaAddressButton: '#connect-via-address'
@@ -20,8 +21,10 @@ const TEST_CONFIG = {
   hardcodedPeerId: '12D3KooWA1bysjrTACSWqf6q172inxvwKHUxAnBtVgaVDKMxpZtx',
   relayPort: '8080',
   relayListenAddress: '/ip4/127.0.0.1/tcp/8080/ws',
-  testSS58AddressA: '5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY',
-  testSS58AddressB: '5FHneW46xGXgs5mUiveU4sbTyGBzmstUspZC92UhjJM694ty'
+  testSS58AddressA: '5CXkZyy4S5b3w16wvKA2hUwzp5q2y7UtRPkXnW97QGvDN8Jw',
+  testSS58AddressB: '5Gma8SNsn6rkQf9reAWFQ9WKq8bwwHtSzwMYtLTdhYsGPKiy',
+  testSecretKeyA: '0x473a77675b8e77d90c1b6dc2dbe6ac533b0853790ea8bcadf0ee8b5da4cfbbce',
+  testSecretKeyB: '0xdb9ddbb3d6671c4de8248a4fba95f3d873dc21a0434b52951bb33730c1ac93d7'
 }
 
 // Test Timeouts
@@ -156,8 +159,8 @@ test.describe('browser to browser example:', () => {
     await waitForRelayConnection(pageB)
 
     // Store SS58 addresses in the relay
-    await storeSS58Address(pageA, TEST_CONFIG.testSS58AddressA)
-    await storeSS58Address(pageB, TEST_CONFIG.testSS58AddressB)
+    await storeSS58Address(pageA, TEST_CONFIG.testSS58AddressA, TEST_CONFIG.testSecretKeyA)
+    await storeSS58Address(pageB, TEST_CONFIG.testSS58AddressB, TEST_CONFIG.testSecretKeyB)
 
     // Connect pageB to pageA via SS58 address
     await connectViaSS58Address(pageB, TEST_CONFIG.testSS58AddressA)
@@ -208,13 +211,14 @@ const waitForRelayConnection = async (page) => {
 }
 
 // SS58 Address Storage Test
-const storeSS58Address = async (page, addressToStore) => {
+const storeSS58Address = async (page, addressToStore, secretKey) => {
   await page.fill(SELECTORS.ss58AddressInput, addressToStore)
+  await page.fill(SELECTORS.secretKeyInput, secretKey)
   await page.click(SELECTORS.storeAddressButton)
 
   const outputLocator = page.locator(SELECTORS.output)
   await expect(outputLocator).toContainText(`Valid address: ${addressToStore}`)
-  await expect(outputLocator).toContainText('Address stored successfully')
+  await expect(outputLocator).toContainText('Address registered with proof of possession!')
 }
 
 // SS58 Address Connection Test

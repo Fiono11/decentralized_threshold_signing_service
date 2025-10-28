@@ -201,14 +201,19 @@
 
       <!-- SS58 Address Storage Section -->
       <section class="section section--highlighted" aria-label="Store SS58 address">
-        <h2>📝 Store SS58 Address</h2>
-        <form role="form" aria-label="Store your SS58 address in the relay">
+        <h2>📝 Store SS58 Address with Proof of Possession</h2>
+        <form role="form" aria-label="Store your SS58 address in the relay with proof of possession">
           <label for="ss58-address-input">Your SS58 Address:</label>
           <input type="text" id="ss58-address-input" name="ss58-address-input"
             placeholder="Enter your SS58 address (e.g., 5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY)"
             aria-describedby="ss58-storage-help" />
-          <button type="button" id="store-address-input" aria-label="Store your SS58 address in the relay">
-            Store SS58 Address in Relay
+          <label for="secret-key-input">Your Secret Key (32 bytes hex):</label>
+          <input type="text" id="secret-key-input" name="secret-key-input"
+            placeholder="Enter your secret key (e.g., 0x473a77675b8e77d90c1b6dc2dbe6ac533b0853790ea8bcadf0ee8b5da4cfbbce)"
+            aria-describedby="secret-key-help" />
+          <button type="button" id="store-address-input"
+            aria-label="Store your SS58 address in the relay with proof of possession">
+            Store SS58 Address with Proof of Possession
           </button>
         </form>
       </section>

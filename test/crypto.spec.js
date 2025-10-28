@@ -352,4 +352,32 @@ test.describe('Secret Key to SS58 Address Mapping:', () => {
             verifySignature(incorrectAddress, testMessage, signature)
         }).toThrow('Address mismatch')
     })
+
+    test('should work with challenge-response proof of possession flow', () => {
+        const challenge = 'a1b2c3d4e5f6789012345678901234567890abcdef1234567890abcdef123456'
+        const ss58Address = TEST_DATA.expectedSS58Address
+        const secretKey = TEST_DATA.correctSecretKey
+
+        // Create key pair from correct secret key
+        const keyPair = createKeyPair(secretKey)
+
+        // Verify the address matches expected
+        expect(keyPair.address).toBe(ss58Address)
+
+        // Sign the challenge
+        const signature = signMessage(keyPair, challenge)
+
+        // Verify signature is valid
+        expect(signature).toBeDefined()
+        expect(signature.length).toBe(64)
+
+        // Verify the signature using verifySignature
+        const isValid = verifySignature(ss58Address, challenge, signature)
+        expect(isValid).toBe(true)
+
+        // Test with wrong challenge - should return false
+        const wrongChallenge = 'wrongchallenge1234567890123456789012345678901234567890abcdef'
+        const isValidWrong = verifySignature(ss58Address, wrongChallenge, signature)
+        expect(isValidWrong).toBe(false)
+    })
 })

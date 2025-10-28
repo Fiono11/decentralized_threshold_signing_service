@@ -11,10 +11,14 @@ import { byteStream } from 'it-byte-stream'
 import { fromString, toString } from 'uint8arrays'
 import { peerIdFromString } from '@libp2p/peer-id'
 import fetch from 'node-fetch'
+import { cryptoWaitReady, sr25519Verify, sr25519PairFromSeed } from '@polkadot/util-crypto'
+import { decodeAddress, encodeAddress } from '@polkadot/keyring'
+import { hexToU8a } from '@polkadot/util'
 
 // Constants
 const KV_PROTOCOL = '/libp2p/examples/kv/1.0.0'
 const KV_QUERY_PROTOCOL = '/libp2p/examples/kv-query/1.0.0'
+const PROOF_OF_POSSESSION_PROTOCOL = '/libp2p/examples/proof-of-possession/1.0.0'
 const HARDCODED_PEER_ID = '12D3KooWA1bysjrTACSWqf6q172inxvwKHUxAnBtVgaVDKMxpZtx'
 const EXTERNAL_PORT = '8080'
 const MAX_RESERVATIONS = Infinity
@@ -25,9 +29,74 @@ const STREAM_ABORT_ERROR = 'ERR_STREAM_ABORT'
 // Default Key-Value Store
 const kvStore = new Map()
 
+// Challenge store for proof of possession
+const challengeStore = new Map()
+
 // Utility Functions
 const logInfo = (message) => console.log(message)
 const logError = (message) => console.log(`ERROR: ${message}`)
+
+// Initialize crypto
+let cryptoReady = false
+const initializeCrypto = async () => {
+  if (!cryptoReady) {
+    await cryptoWaitReady()
+    cryptoReady = true
+  }
+}
+
+// Generate a random challenge
+const generateChallenge = () => {
+  const challenge = crypto.getRandomValues(new Uint8Array(32))
+  return Array.from(challenge).map(b => b.toString(16).padStart(2, '0')).join('')
+}
+
+// Verify SS58 address format
+const validateSS58Address = (address) => {
+  if (!address || typeof address !== 'string') {
+    throw new Error('Invalid address: must be a non-empty string')
+  }
+
+  try {
+    const decoded = decodeAddress(address)
+    const reEncoded = encodeAddress(decoded)
+    if (address !== reEncoded) {
+      throw new Error('Address format is not canonical. Expected: ' + reEncoded)
+    }
+    return true
+  } catch (error) {
+    throw new Error(`Invalid SS58 address: ${error.message}`)
+  }
+}
+
+// Verify signature for proof of possession
+const verifyProofOfPossession = async (ss58Address, challenge, signature) => {
+  try {
+    await initializeCrypto()
+
+    // Validate SS58 address
+    validateSS58Address(ss58Address)
+
+    // Convert challenge to bytes (challenge is already a hex string without 0x prefix)
+    const challengeBytes = hexToU8a('0x' + challenge)
+
+    // Convert signature to Uint8Array
+    const signatureBytes = typeof signature === 'string'
+      ? hexToU8a(signature.startsWith('0x') ? signature : '0x' + signature)
+      : new Uint8Array(signature)
+
+    // Decode the SS58 address to get the public key
+    const publicKey = decodeAddress(ss58Address)
+
+    // Verify the signature
+    const isValid = sr25519Verify(challengeBytes, signatureBytes, publicKey)
+
+    return isValid
+  } catch (error) {
+    logError(`Proof of possession verification failed: ${error.message}`)
+    return false
+  }
+}
 
 const createSuccessResponse = (data = {}) => ({
   success: true,
@@ -239,10 +308,143 @@ const setupKvQueryHandler = (server, kvStore) => {
   })
 }
 
+// Proof of Possession Handler Functions
+const processChallengeRequest = (request) => {
+  if (!request.ss58Address) {
+    throw new Error('SS58 address is required')
+  }
+
+  // Validate SS58 address format
+  validateSS58Address(request.ss58Address)
+
+  // Generate challenge
+  const challenge = generateChallenge()
+
+  // Store challenge with timestamp (expires in 5 minutes)
+  const expiresAt = Date.now() + (5 * 60 * 1000)
+  challengeStore.set(request.ss58Address, {
+    challenge,
+    expiresAt
+  })
+
+  logInfo(`Generated challenge for ${request.ss58Address}: ${challenge}`)
+
+  return createSuccessResponse({
+    challenge,
+    message: 'Challenge generated successfully'
+  })
+}
+
+const processProofRequest = async (request, kvStore) => {
+  if (!request.ss58Address || !request.challenge || !request.signature) {
+    throw new Error('SS58 address, challenge, and signature are required')
+  }
+
+  // Validate SS58 address format
+  validateSS58Address(request.ss58Address)
+
+  // Check if challenge exists and is not expired
+  const storedChallenge = challengeStore.get(request.ss58Address)
+  if (!storedChallenge) {
+    throw new Error('No challenge found for this address')
+  }
+
+  if (Date.now() > storedChallenge.expiresAt) {
+    challengeStore.delete(request.ss58Address)
+    throw new Error('Challenge has expired')
+  }
+
+  if (storedChallenge.challenge !== request.challenge) {
+    throw new Error('Invalid challenge')
+  }
+
+  // Verify the signature
+  const isValid = await verifyProofOfPossession(request.ss58Address, request.challenge, request.signature)
+
+  if (!isValid) {
+    throw new Error('Invalid signature')
+  }
+
+  // Clean up the challenge
+  challengeStore.delete(request.ss58Address)
+
+  // Store the address with proof of possession
+  const storageData = {
+    value: request.webrtcMultiaddr,
+    circuitRelay: request.circuitRelay || null,
+    proofOfPossession: {
+      verified: true,
+      verifiedAt: Date.now()
+    }
+  }
+
+  kvStore.set(request.ss58Address, JSON.stringify(storageData))
+  logInfo(`Stored with proof of possession: ${request.ss58Address} -> ${request.webrtcMultiaddr} (${kvStore.size} total)`)
+
+  return createSuccessResponse({
+    message: 'Address registered with proof of possession',
+    verified: true
+  })
+}
+
+const processProofOfPossessionRequest = async (request, kvStore) => {
+  if (request.action === 'challenge') {
+    return processChallengeRequest(request)
+  } else if (request.action === 'proof') {
+    return processProofRequest(request, kvStore)
+  } else {
+    throw new Error('Invalid action. Must be "challenge" or "proof"')
+  }
+}
+
+const handleProofOfPossessionStream = async (streamReader, streamWriter, kvStore) => {
+  while (true) {
+    const data = await streamReader.read()
+    if (data === null) {
+      break // End of stream
+    }
+
+    const message = toString(data.subarray())
+    let response
+
+    try {
+      const request = JSON.parse(message)
+      response = await processProofOfPossessionRequest(request, kvStore)
+    } catch (error) {
+      if (error instanceof SyntaxError) {
+        logError(`Invalid JSON: ${message}`)
+        response = createErrorResponse('Invalid JSON')
+      } else {
+        logError(`Proof of possession error: ${error.message}`)
+        response = createErrorResponse(error.message)
+      }
+    }
+
+    await writeResponse(streamWriter, response)
+  }
+}
+
+// Proof of Possession Protocol Handler
+const setupProofOfPossessionHandler = (server, kvStore) => {
+  server.handle(PROOF_OF_POSSESSION_PROTOCOL, async ({ stream, connection }) => {
+    const streamReader = byteStream(stream)
+    const streamWriter = byteStream(stream)
+
+    try {
+      await handleProofOfPossessionStream(streamReader, streamWriter, kvStore)
+    } catch (error) {
+      if (error.code !== STREAM_ABORT_ERROR) {
+        logError(`Proof of possession stream error: ${error.message}`)
+      }
+    }
+  })
+}
+
 // Main Handler Setup Function
 export function setupRelayHandlers(server, kvStore) {
   setupKvStorageHandler(server, kvStore)
   setupKvQueryHandler(server, kvStore)
+  setupProofOfPossessionHandler(server, kvStore)
 }
 
 // Server Startup and Logging
@@ -250,7 +452,7 @@ const logServerInfo = (server) => {
   logInfo('Relay server started:')
   logInfo(`Peer ID: ${server.peerId.toString()}`)
   logInfo(`Listening on: ${server.getMultiaddrs().map(ma => ma.toString()).join(', ')}`)
-  logInfo('Protocols: KV storage, KV query ready')
+  logInfo('Protocols: KV storage, KV query, Proof of Possession ready')
 }
 
 // Standalone Server Startup

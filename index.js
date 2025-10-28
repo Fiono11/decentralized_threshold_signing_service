@@ -13,12 +13,15 @@ import { byteStream } from 'it-byte-stream'
 import { createLibp2p } from 'libp2p'
 import { fromString, toString } from 'uint8arrays'
 import { decodeAddress, encodeAddress } from '@polkadot/keyring'
+import { cryptoWaitReady, sr25519Sign, sr25519PairFromSeed } from '@polkadot/util-crypto'
+import { hexToU8a } from '@polkadot/util'
 
 // Constants
 const WEBRTC_CODE = WebRTC.code
 const CHAT_PROTOCOL = '/libp2p/examples/chat/1.0.0'
 const KV_PROTOCOL = '/libp2p/examples/kv/1.0.0'
 const KV_QUERY_PROTOCOL = '/libp2p/examples/kv-query/1.0.0'
+const PROOF_OF_POSSESSION_PROTOCOL = '/libp2p/examples/proof-of-possession/1.0.0'
 const CONNECTION_TIMEOUT = 10000
 const STREAM_TIMEOUT = 5000
 const CHAT_STREAM_TIMEOUT = 5000
@@ -31,6 +34,8 @@ const sendSection = document.getElementById('send-section')
 let peerMultiaddr
 let chatStream
 let mySS58Address = null
+let mySecretKey = null
+let cryptoReady = false
 
 // Utility Functions
 const appendOutput = (message) => {
@@ -61,6 +66,48 @@ const validatePolkadotAddress = (address) => {
   } catch (error) {
     throw new Error(`Invalid SS58 address: ${error.message}`)
   }
+}
+
+// Initialize crypto
+const initializeCrypto = async () => {
+  if (!cryptoReady) {
+    await cryptoWaitReady()
+    cryptoReady = true
+  }
+}
+
+// Sign a message with the secret key
+const signMessage = async (message, secretKey) => {
+  await initializeCrypto()
+
+  // Convert message to Uint8Array
+  // If message is a hex string, convert it to bytes, otherwise encode as text
+  let messageBytes
+  if (typeof message === 'string' && /^[0-9a-fA-F]+$/.test(message)) {
+    // It's a hex string, convert to bytes
+    messageBytes = hexToU8a('0x' + message)
+  } else {
+    // It's a text message, encode as text
+    messageBytes = new TextEncoder().encode(message)
+  }
+
+  // Convert secret key to Uint8Array
+  const secretKeyBytes = typeof secretKey === 'string'
+    ? hexToU8a(secretKey.startsWith('0x') ? secretKey : '0x' + secretKey)
+    : new Uint8Array(secretKey)
+
+  // Create key pair from secret key
+  const pair = sr25519PairFromSeed(secretKeyBytes)
+
+  // Sign the message
+  const signature = sr25519Sign(messageBytes, pair)
+
+  return signature
+}
+
+// Convert signature to hex string
+const signatureToHex = (signature) => {
+  return '0x' + Array.from(signature).map(b => b.toString(16).padStart(2, '0')).join('')
 }
 
 // LibP2P Node Configuration
@@ -211,20 +258,15 @@ window.send.onclick = async () => {
   await sendMessage(message)
 }
 
-// Address Storage Functions
-const getWebrtcMultiaddr = () => {
-  const multiaddrs = node.getMultiaddrs()
-  return multiaddrs.find(multiaddr => WebRTC.matches(multiaddr))
-}
-
-const storeAddressInRelay = async (polkadotAddress, webrtcMultiaddr) => {
+// Proof of Possession Functions
+const requestChallenge = async (ss58Address) => {
   const relayConnection = getRelayConnection()
   if (!relayConnection) {
     throw new Error('No relay connection found')
   }
 
-  appendOutput('Storing address in relay...')
-  const stream = await node.dialProtocol(relayConnection.remoteAddr, KV_PROTOCOL, {
+  appendOutput('Requesting challenge from relay...')
+  const stream = await node.dialProtocol(relayConnection.remoteAddr, PROOF_OF_POSSESSION_PROTOCOL, {
     signal: AbortSignal.timeout(STREAM_TIMEOUT)
   })
 
@@ -232,9 +274,9 @@ const storeAddressInRelay = async (polkadotAddress, webrtcMultiaddr) => {
     const streamWriter = byteStream(stream)
     const streamReader = byteStream(stream)
 
-    const kvPair = { key: polkadotAddress, value: webrtcMultiaddr.toString() }
-    const message = JSON.stringify(kvPair)
-    appendOutput(`Storing: ${polkadotAddress} -> ${webrtcMultiaddr.toString()}`)
+    const request = { action: 'challenge', ss58Address }
+    const message = JSON.stringify(request)
+    appendOutput(`Requesting challenge for: ${ss58Address}`)
 
     await streamWriter.write(fromString(message))
     const response = await streamReader.read()
@@ -247,22 +289,104 @@ const storeAddressInRelay = async (polkadotAddress, webrtcMultiaddr) => {
     const parsed = JSON.parse(responseText)
 
     if (parsed.success) {
-      mySS58Address = polkadotAddress
-      appendOutput('Address stored successfully')
+      appendOutput(`Challenge received: ${parsed.challenge}`)
+      return parsed.challenge
     } else {
-      throw new Error(`Store failed: ${parsed.error}`)
+      throw new Error(`Challenge request failed: ${parsed.error}`)
     }
   } finally {
     await stream.close()
   }
 }
 
+const submitProof = async (ss58Address, challenge, signature, webrtcMultiaddr) => {
+  const relayConnection = getRelayConnection()
+  if (!relayConnection) {
+    throw new Error('No relay connection found')
+  }
+
+  appendOutput('Submitting proof to relay...')
+  const stream = await node.dialProtocol(relayConnection.remoteAddr, PROOF_OF_POSSESSION_PROTOCOL, {
+    signal: AbortSignal.timeout(STREAM_TIMEOUT)
+  })
+
+  try {
+    const streamWriter = byteStream(stream)
+    const streamReader = byteStream(stream)
+
+    const request = {
+      action: 'proof',
+      ss58Address,
+      challenge,
+      signature: signatureToHex(signature),
+      webrtcMultiaddr: webrtcMultiaddr.toString()
+    }
+    const message = JSON.stringify(request)
+    appendOutput(`Submitting proof for: ${ss58Address}`)
+
+    await streamWriter.write(fromString(message))
+    const response = await streamReader.read()
+
+    if (response === null) {
+      throw new Error('No response from relay')
+    }
+
+    const responseText = toString(response.subarray())
+    const parsed = JSON.parse(responseText)
+
+    if (parsed.success) {
+      appendOutput('Proof of possession verified successfully!')
+      return true
+    } else {
+      throw new Error(`Proof submission failed: ${parsed.error}`)
+    }
+  } finally {
+    await stream.close()
+  }
+}
+
+// Address Storage Functions
+const getWebrtcMultiaddr = () => {
+  const multiaddrs = node.getMultiaddrs()
+  return multiaddrs.find(multiaddr => WebRTC.matches(multiaddr))
+}
+
+const storeAddressInRelay = async (polkadotAddress, webrtcMultiaddr, secretKey) => {
+  if (!secretKey) {
+    throw new Error('Secret key is required for proof of possession')
+  }
+
+  try {
+    // Step 1: Request challenge from relay
+    const challenge = await requestChallenge(polkadotAddress)
+
+    // Step 2: Sign the challenge with the secret key
+    appendOutput('Signing challenge...')
+    const signature = await signMessage(challenge, secretKey)
+
+    // Step 3: Submit proof to relay
+    await submitProof(polkadotAddress, challenge, signature, webrtcMultiaddr)
+
+    mySS58Address = polkadotAddress
+    mySecretKey = secretKey
+    appendOutput('Address registered with proof of possession!')
+  } catch (error) {
+    throw new Error(`Proof of possession failed: ${error.message}`)
+  }
+}
+
 // Store Address Button Handler
 window['store-address-input'].onclick = async () => {
   const polkadotAddress = window['ss58-address-input'].value.toString().trim()
+  const secretKey = window['secret-key-input'].value.toString().trim()
 
   if (!polkadotAddress) {
     appendOutput('Please enter a SS58 address')
+    return
+  }
+
+  if (!secretKey) {
+    appendOutput('Please enter a secret key')
     return
   }
 
@@ -271,6 +395,13 @@ window['store-address-input'].onclick = async () => {
     validatePolkadotAddress(polkadotAddress)
     appendOutput(`Valid address: ${polkadotAddress}`)
 
+    appendOutput('Validating secret key...')
+    // Validate secret key format (should be 32 bytes = 64 hex chars + 0x prefix)
+    if (!secretKey.startsWith('0x') || secretKey.length !== 66) {
+      throw new Error('Secret key must be 32 bytes (64 hex characters) with 0x prefix')
+    }
+    appendOutput(`Valid secret key: ${secretKey.substring(0, 10)}...`)
+
     const webrtcMultiaddr = getWebrtcMultiaddr()
     if (!webrtcMultiaddr) {
       const availableMultiaddrs = node.getMultiaddrs().map(ma => ma.toString()).join(', ')
@@ -278,7 +409,7 @@ window['store-address-input'].onclick = async () => {
       return
     }
 
-    await storeAddressInRelay(polkadotAddress, webrtcMultiaddr)
+    await storeAddressInRelay(polkadotAddress, webrtcMultiaddr, secretKey)
   } catch (error) {
     appendOutput(`Error: ${error.message}`)
   }
