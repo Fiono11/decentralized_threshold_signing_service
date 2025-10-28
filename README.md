@@ -144,7 +144,7 @@ Before running the test scenario, ensure Docker is properly set up:
    - Verify you see: "Address stored successfully"
 
 5. **Open a second browser window/tab (or incognito window):**
-   - Navigate to `http://localhost:5173`
+   - Navigate to `http://localhost:5174`
    - Wait for the "Connected to relay" message
 
 6. **Connect to the first peer:**

@@ -1,10 +1,8 @@
 // Browser Integration Tests for Decentralized Threshold Signing Service
 
-import { setup, expect } from 'test-ipfs-example/browser'
+import { test, expect } from '@playwright/test'
 import { createRelayServer, setupRelayHandlers } from '../relay.js'
-
-// Test Configuration
-const test = setup()
+import { spawn } from 'child_process'
 
 // DOM Selectors
 const SELECTORS = {
@@ -34,7 +32,57 @@ const TIMEOUTS = {
 }
 
 // Global Test State
-let testUrl
+let testUrlA = 'http://localhost:5173'
+let testUrlB = 'http://localhost:5174'
+let viteServerA
+let viteServerB
+
+// Vite Server Management
+const startViteServer = (port) => {
+  return new Promise((resolve, reject) => {
+    const server = spawn('npm', ['start'], {
+      env: { ...process.env, VITE_PORT: port.toString() },
+      stdio: 'pipe'
+    })
+
+    let resolved = false
+
+    server.stdout.on('data', (data) => {
+      const output = data.toString()
+      console.log(`Vite server on port ${port}: ${output}`)
+
+      if (output.includes('ready') && !resolved) {
+        resolved = true
+        resolve(server)
+      }
+    })
+
+    server.stderr.on('data', (data) => {
+      console.error(`Vite server on port ${port} error: ${data}`)
+    })
+
+    server.on('error', (error) => {
+      if (!resolved) {
+        resolved = true
+        reject(error)
+      }
+    })
+
+    // Timeout after 30 seconds
+    setTimeout(() => {
+      if (!resolved) {
+        resolved = true
+        reject(new Error(`Vite server on port ${port} failed to start within 30 seconds`))
+      }
+    }, 30000)
+  })
+}
+
+const stopViteServer = (server) => {
+  if (server) {
+    server.kill('SIGTERM')
+  }
+}
 
 // Relay Server Management
 const createTestRelayServer = async () => {
@@ -61,30 +109,47 @@ test.describe('browser to browser example:', () => {
   let relayNodeAddress
 
   // Test Setup and Teardown
-  test.beforeAll(async ({ servers }, testInfo) => {
+  test.beforeAll(async ({ }, testInfo) => {
     testInfo.setTimeout(TIMEOUTS.beforeAll)
+
+    // Start relay server
     const relayServer = await createTestRelayServer()
     relayNode = relayServer.relayNode
     relayNodeAddress = relayServer.relayNodeAddress
-    testUrl = servers[0].url
+
+    // Start both Vite servers
+    console.log('Starting Vite servers...')
+    viteServerA = await startViteServer(5173)
+    viteServerB = await startViteServer(5174)
+
+    console.log(`Client A URL: ${testUrlA}`)
+    console.log(`Client B URL: ${testUrlB}`)
   })
 
   test.afterAll(() => {
     if (relayNode) {
       relayNode.stop()
     }
-  })
 
-  test.beforeEach(async ({ page }) => {
-    await page.goto(testUrl)
+    // Stop Vite servers
+    console.log('Stopping Vite servers...')
+    stopViteServer(viteServerA)
+    stopViteServer(viteServerB)
   })
 
   // Main Integration Test
-  test('should connect to another browser peer and send a message via SS58 addresses', async ({ page: pageA, context }) => {
+  test('should connect to another browser peer and send a message via SS58 addresses', async ({ browser }) => {
     test.setTimeout(TIMEOUTS.mainTest)
 
-    const pageB = await context.newPage()
-    await pageB.goto(testUrl)
+    // Create two separate browser contexts (clients)
+    const contextA = await browser.newContext()
+    const contextB = await browser.newContext()
+
+    const pageA = await contextA.newPage()
+    const pageB = await contextB.newPage()
+
+    await pageA.goto(testUrlA)  // Client A connects to first server
+    await pageB.goto(testUrlB)  // Client B connects to second server
 
     // Establish relay connections for both pages
     await waitForRelayConnection(pageA)
@@ -114,6 +179,10 @@ test.describe('browser to browser example:', () => {
     // Test bidirectional messaging
     await sendMessage(pageA, pageB, 'hello B from A')
     await sendMessage(pageB, pageA, 'hello A from B')
+
+    // Cleanup browser contexts
+    await contextA.close()
+    await contextB.close()
   })
 })
 

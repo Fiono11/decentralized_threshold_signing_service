@@ -7,7 +7,7 @@ export default {
   },
   server: {
     host: '0.0.0.0', // Allow external connections
-    port: 5173, // Default Vite port
+    port: process.env.VITE_PORT ? parseInt(process.env.VITE_PORT) : 5173, // Use VITE_PORT env var or default to 5173
     open: false, // Don't automatically open browser
     cors: true // Enable CORS for cross-origin requests
   }
