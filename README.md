@@ -63,31 +63,68 @@ Two browsers will exchange messages and produce a valid threshold signature over
 - Complete tutorial and article explaining the service
 - Production-ready implementation
 
-## Prerequisites
+## Build and Testing
 
+### Without Docker
+
+#### Prerequisites
+- Node.js installed
+- npm or yarn package manager
+
+#### Automatic Testing
+```bash
+npm test
+```
+
+#### Manual Testing
+
+1. **Start the relay server:**
+   ```bash
+   npm run relay
+   ```
+
+2. **Start the first client application on port 5173:**
+   ```bash
+   npm start
+   ```
+
+3. **Start the second client application on port 5174 (in a new terminal):**
+   ```bash
+   npm start
+   ```
+
+4. **Follow the manual testing steps below** (same process for both Docker and non-Docker)
+
+### With Docker
+
+#### Prerequisites
 - Docker and Docker Compose installed
-- Two different browsers (or incognito/private windows)
 
-### Docker Services
+#### Docker Services
 
-This project provides three Docker services:
+This project provides four Docker services:
 
 1. **`relay-server`** - The LibP2P relay server
    - Runs on port 8080
    - Handles peer discovery and key-value storage
-   - Must be started before the client
+   - Must be started before the clients
 
-2. **`client-dev`** - The development client server
+2. **`client-a`** - The first client server
    - Runs on port 5173
-   - Serves the browser-based client application
+   - Serves the browser-based client application for the first participant
    - Depends on the relay server being available
 
-3. **`test`** - The automated test runner
+3. **`client-b`** - The second client server
+   - Runs on port 5174
+   - Serves the browser-based client application for the second participant
+   - Depends on the relay server being available
+
+4. **`test`** - The automated test runner
    - Uses Playwright for browser automation
    - Runs integration tests against the relay and client services
    - Exits after test completion
 
-### Docker Setup
+#### Docker Setup
 
 Before running the test scenario, ensure Docker is properly set up:
 
@@ -106,80 +143,61 @@ Before running the test scenario, ensure Docker is properly set up:
    ```
    You should see Docker version information and an empty container list.
 
-## Build and Testing
+#### Automatic Testing
+```bash
+npm run test:docker
+```
 
-### Build
+#### Manual Testing
 
-**Build all containers (relay-server, client-dev, test):**
-   ```bash
-   docker compose build
-   ```
+**Start the relay-server and the two clients:**
+```bash
+docker compose up -d
+```
 
-### Automatic Testing
+### Manual Testing Steps (Same for Both Docker and Non-Docker)
 
-**Run automatic tests:**
-   ```bash
-   docker compose run --no-deps test 
-   ```
-
-### Manual Testing
-
-1. **Start the relay server:**
-   ```bash
-   docker compose up -d relay-server
-   ```
-
-2. **Start the client application:**
-   ```bash
-   docker compose up -d client-dev
-   ```
-
-3. **Open the first browser window/tab:**
+1. **Open the first browser window/tab:**
    - Navigate to `http://localhost:5173`
    - Wait for the "Connected to relay" message
 
-4. **Store your SS58 address:**
+2. **Store your SS58 address:**
    - In the "SS58 Address" input field, enter an SS58 address. For example: `5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY`
    - Click "Store SS58 Address in Relay"
    - Verify you see: "Address stored successfully"
 
-5. **Open a second browser window/tab (or incognito window):**
+3. **Open a second browser window/tab (or incognito window):**
    - Navigate to `http://localhost:5174`
    - Wait for the "Connected to relay" message
 
-6. **Connect to the first peer:**
+4. **Connect to the first peer:**
    - In the "SS58 Address" input field, enter: `5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY`
    - Click "Find Peer & Connect"
    - Wait for "Connected to peer!" message
 
-7. **Verify the connection:**
+5. **Verify the connection:**
    - Both browser windows should show the peer connection in "Active Connections"
    - The "Message" section should now be visible in both windows
 
-8. **Stop the relay server:**
-   ```bash
-   docker compose stop relay-server
-   ```
-
-9. **Send a message from the first browser:**
+6. **Send a message from the first browser:**
    - In the first browser window, type a message in the "Message" field
    - Click "Send"
    - Verify the message is received in the second browser window
 
-10. **Send a message from the second browser:**
+7. **Send a message from the second browser:**
    - In the second browser window, type a different message
    - Click "Send"
    - Verify the message is received in first browser window
 
-11. **Stop the client application:**
-   ```bash
-   docker compose stop client-dev
-   ```
+### Cleanup
 
-11. **Clean up:**
-   ```bash
-   docker compose down --rmi all --volumes --remove-orphans
-   ```
+#### Docker Cleanup
+```bash
+docker compose down --rmi all --volumes --remove-orphans
+```
+
+#### Non-Docker Cleanup
+Simply stop the processes with `Ctrl+C` in the terminal windows where they are running.
 
 ## License
 
