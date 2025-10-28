@@ -1,4 +1,6 @@
+use js_sys::Object;
 use js_sys::Uint8Array;
+use schnorrkel::olaf::SigningKeypair;
 use schnorrkel::olaf::simplpedpop::AllMessage;
 use schnorrkel::{KEYPAIR_LENGTH, Keypair, MiniSecretKey, PUBLIC_KEY_LENGTH, PublicKey};
 use wasm_bindgen::JsValue;
@@ -55,7 +57,7 @@ pub fn wasm_simplpedpop_contribute_all(
 pub fn wasm_simplpedpop_recipient_all(
     keypair_bytes: &[u8],
     all_messages_concat: &[u8],
-) -> Result<Uint8Array, JsValue> {
+) -> Result<JsValue, JsValue> {
     if keypair_bytes.len() != KEYPAIR_LENGTH {
         return Err(JsValue::from_str("invalid keypair length"));
     }
@@ -83,8 +85,84 @@ pub fn wasm_simplpedpop_recipient_all(
         .simplpedpop_recipient_all(&all_messages)
         .map_err(|e| JsValue::from_str(&format!("Failed to process AllMessages: {:?}", e)))?;
 
-    let bytes = result.0.spp_output().threshold_public_key().0.to_bytes();
-    Ok(Uint8Array::from(bytes.as_slice()))
+    // Extract the SPPOutputMessage and SigningKeypair
+    let (spp_output_message, signing_keypair) = result;
+
+    // Extract the threshold public key
+    let threshold_pk = spp_output_message.spp_output().threshold_public_key();
+    let threshold_pk_bytes = threshold_pk.0.to_bytes();
+
+    // Serialize the SigningKeypair to bytes
+    let signing_keypair_bytes = signing_keypair.to_bytes();
+
+    // Create a JavaScript object to return the full result
+    let js_result = Object::new();
+
+    // Add the threshold public key
+    js_sys::Reflect::set(
+        &js_result,
+        &JsValue::from_str("threshold_public_key"),
+        &Uint8Array::from(threshold_pk_bytes.as_slice()).into(),
+    )
+    .map_err(|_| JsValue::from_str("Failed to set threshold_public_key in result object"))?;
+
+    // Add the SPPOutputMessage bytes (serialized)
+    let spp_output_bytes = spp_output_message.to_bytes();
+    js_sys::Reflect::set(
+        &js_result,
+        &JsValue::from_str("spp_output_message"),
+        &Uint8Array::from(spp_output_bytes.as_slice()).into(),
+    )
+    .map_err(|_| JsValue::from_str("Failed to set spp_output_message in result object"))?;
+
+    // Add the SigningKeypair bytes
+    js_sys::Reflect::set(
+        &js_result,
+        &JsValue::from_str("signing_keypair"),
+        &Uint8Array::from(signing_keypair_bytes.as_slice()).into(),
+    )
+    .map_err(|_| JsValue::from_str("Failed to set signing_keypair in result object"))?;
+
+    Ok(js_result.into())
+}
+
+#[wasm_bindgen]
+pub fn wasm_threshold_sign_round1(signing_share_bytes: &[u8]) -> Result<JsValue, JsValue> {
+    let signing_share: SigningKeypair = SigningKeypair::from_bytes(&signing_share_bytes)
+        .map_err(|e| JsValue::from_str(&format!("Failed to parse signing share: {:?}", e)))?;
+
+    let (signing_nonces, signing_commitments) = signing_share.commit();
+
+    // Serialize signing nonces to bytes and convert to JSON
+    let nonces_bytes = signing_nonces.to_bytes();
+    let nonces_json = serde_json::to_string(&nonces_bytes.to_vec())
+        .map_err(|e| JsValue::from_str(&format!("Failed to serialize nonces: {}", e)))?;
+
+    // Serialize signing commitments to bytes and convert to JSON
+    let commitments_bytes = signing_commitments.to_bytes();
+    let commitments_json = serde_json::to_string(&commitments_bytes.to_vec())
+        .map_err(|e| JsValue::from_str(&format!("Failed to serialize commitments: {}", e)))?;
+
+    // Create a JavaScript object to return both values
+    let js_result = Object::new();
+
+    // Add the signing nonces
+    js_sys::Reflect::set(
+        &js_result,
+        &JsValue::from_str("signing_nonces"),
+        &JsValue::from_str(&nonces_json),
+    )
+    .map_err(|_| JsValue::from_str("Failed to set signing_nonces in result object"))?;
+
+    // Add the signing commitments
+    js_sys::Reflect::set(
+        &js_result,
+        &JsValue::from_str("signing_commitments"),
+        &JsValue::from_str(&commitments_json),
+    )
+    .map_err(|_| JsValue::from_str("Failed to set signing_commitments in result object"))?;
+
+    Ok(js_result.into())
 }
 
 #[cfg(test)]
@@ -140,25 +218,27 @@ mod tests {
 
         for (i, recipient) in contributors.iter().enumerate() {
             println!("\n--- Recipient {} processing ---", i + 1);
-            let spp_output = recipient
+            let (spp_output_message, signing_keypair) = recipient
                 .simplpedpop_recipient_all(&all_messages)
                 .expect("Failed to process messages");
 
-            spp_output.0.verify_signature().expect("Invalid signature");
+            spp_output_message
+                .verify_signature()
+                .expect("Invalid signature");
 
-            let threshold_pk = spp_output.0.spp_output().threshold_public_key();
+            let threshold_pk = spp_output_message.spp_output().threshold_public_key();
             println!("Threshold public key: {:?}", threshold_pk.0.to_bytes());
+            println!("Signing keypair bytes: {:?}", signing_keypair.to_bytes());
 
-            spp_outputs.push(spp_output);
+            spp_outputs.push((spp_output_message, signing_keypair));
         }
 
         // Verify that all threshold_public_keys are equal
         let threshold_pk_0 = spp_outputs[0].0.spp_output().threshold_public_key();
-        for (i, spp_output) in spp_outputs.iter().enumerate() {
+        for (i, (spp_output_message, _signing_keypair)) in spp_outputs.iter().enumerate() {
             assert_eq!(
                 threshold_pk_0.0.to_bytes(),
-                spp_output
-                    .0
+                spp_output_message
                     .spp_output()
                     .threshold_public_key()
                     .0

@@ -339,7 +339,8 @@ test.describe('WASM Integration Tests for Olaf Threshold Public Key Generation:'
       const allMessagesJson = JSON.stringify(allMessagesArray)
       const allMessagesBytes = new TextEncoder().encode(allMessagesJson)
 
-      return window.wasm_simplpedpop_recipient_all(keypairBytes, allMessagesBytes)
+      const result = window.wasm_simplpedpop_recipient_all(keypairBytes, allMessagesBytes)
+      return result.threshold_public_key
     }, {
       secretKey: TEST_SECRET_KEY_1,
       allMessageA: Array.from(allMessageA),
@@ -357,7 +358,8 @@ test.describe('WASM Integration Tests for Olaf Threshold Public Key Generation:'
       const allMessagesJson = JSON.stringify(allMessagesArray)
       const allMessagesBytes = new TextEncoder().encode(allMessagesJson)
 
-      return window.wasm_simplpedpop_recipient_all(keypairBytes, allMessagesBytes)
+      const result = window.wasm_simplpedpop_recipient_all(keypairBytes, allMessagesBytes)
+      return result.threshold_public_key
     }, {
       secretKey: TEST_SECRET_KEY_2,
       allMessageA: Array.from(allMessageA),
@@ -431,14 +433,20 @@ test.describe('WASM Integration Tests for Olaf Threshold Public Key Generation:'
 
       // Process from participant 1's perspective
       console.log(`\n--- Recipient 1 processing ---`)
-      const thresholdKey1 = window.wasm_simplpedpop_recipient_all(keypair1Bytes, allMessagesBytes)
+      const result1 = window.wasm_simplpedpop_recipient_all(keypair1Bytes, allMessagesBytes)
+      const thresholdKey1 = result1.threshold_public_key
       console.log(`Threshold key 1: ${thresholdKey1.length} bytes`)
+      console.log(`SPP output message 1: ${result1.spp_output_message.length} bytes`)
+      console.log(`Signing keypair 1: ${result1.signing_keypair.length} bytes`)
       console.log(`Threshold key 1 (first 16 bytes): ${Array.from(thresholdKey1.slice(0, 16)).map(b => b.toString(16).padStart(2, '0')).join(' ')}`)
 
       // Process from participant 2's perspective
       console.log(`\n--- Recipient 2 processing ---`)
-      const thresholdKey2 = window.wasm_simplpedpop_recipient_all(keypair2Bytes, allMessagesBytes)
+      const result2 = window.wasm_simplpedpop_recipient_all(keypair2Bytes, allMessagesBytes)
+      const thresholdKey2 = result2.threshold_public_key
       console.log(`Threshold key 2: ${thresholdKey2.length} bytes`)
+      console.log(`SPP output message 2: ${result2.spp_output_message.length} bytes`)
+      console.log(`Signing keypair 2: ${result2.signing_keypair.length} bytes`)
       console.log(`Threshold key 2 (first 16 bytes): ${Array.from(thresholdKey2.slice(0, 16)).map(b => b.toString(16).padStart(2, '0')).join(' ')}`)
 
       // Convert to arrays for comparison
@@ -465,7 +473,11 @@ test.describe('WASM Integration Tests for Olaf Threshold Public Key Generation:'
         thresholdKeyHex: thresholdKey1Bytes.map(b => b.toString(16).padStart(2, '0')).join(''),
         thresholdKeyHexFormatted: '0x' + thresholdKey1Bytes.map(b => b.toString(16).padStart(2, '0')).join(''),
         allMessage1Length: allMessage1.length,
-        allMessage2Length: allMessage2.length
+        allMessage2Length: allMessage2.length,
+        sppOutputMessage1Length: result1.spp_output_message.length,
+        sppOutputMessage2Length: result2.spp_output_message.length,
+        signingKeypair1Length: result1.signing_keypair.length,
+        signingKeypair2Length: result2.signing_keypair.length
       }
     }, {
       secretKey1: TEST_SECRET_KEY_1,
@@ -480,6 +492,10 @@ test.describe('WASM Integration Tests for Olaf Threshold Public Key Generation:'
     expect(result.thresholdKey1Length).toBeGreaterThan(0)
     expect(result.allMessage1Length).toBeGreaterThan(0)
     expect(result.allMessage2Length).toBeGreaterThan(0)
+    expect(result.sppOutputMessage1Length).toBeGreaterThan(0)
+    expect(result.sppOutputMessage2Length).toBeGreaterThan(0)
+    expect(result.signingKeypair1Length).toBeGreaterThan(0)
+    expect(result.signingKeypair2Length).toBeGreaterThan(0)
 
     console.log(`✓ Complete SimplPedPoP protocol test passed`)
     console.log(`✓ Threshold keys are identical: ${result.thresholdKey1Length} bytes`)
@@ -487,5 +503,9 @@ test.describe('WASM Integration Tests for Olaf Threshold Public Key Generation:'
     console.log(`✓ Threshold Public Key (hex, formatted): ${result.thresholdKeyHexFormatted}`)
     console.log(`✓ AllMessage 1: ${result.allMessage1Length} bytes`)
     console.log(`✓ AllMessage 2: ${result.allMessage2Length} bytes`)
+    console.log(`✓ SPP Output Message 1: ${result.sppOutputMessage1Length} bytes`)
+    console.log(`✓ SPP Output Message 2: ${result.sppOutputMessage2Length} bytes`)
+    console.log(`✓ Signing Keypair 1: ${result.signingKeypair1Length} bytes`)
+    console.log(`✓ Signing Keypair 2: ${result.signingKeypair2Length} bytes`)
   })
 })

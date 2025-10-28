@@ -592,17 +592,27 @@ window['process-all-messages'].onclick = async () => {
 
     // Call the WASM function to generate threshold key
     appendOutput('Calling wasm_simplpedpop_recipient_all...')
-    const thresholdKey = window.wasm_simplpedpop_recipient_all(keypairBytes, allMessagesBytes)
+    const result = window.wasm_simplpedpop_recipient_all(keypairBytes, allMessagesBytes)
+
+    // Extract the components from the result object
+    const thresholdKey = result.threshold_public_key
+    const sppOutputMessage = result.spp_output_message
+    const signingKeypair = result.signing_keypair
 
     appendOutput(`✓ Threshold key generated successfully: ${thresholdKey.length} bytes`)
+    appendOutput(`✓ SPP Output Message: ${sppOutputMessage.length} bytes`)
+    appendOutput(`✓ Signing Keypair: ${signingKeypair.length} bytes`)
     appendOutput(`First 16 bytes: ${Array.from(thresholdKey.slice(0, 16)).map(b => b.toString(16).padStart(2, '0')).join(' ')}`)
 
     // Convert to hex for display
     const thresholdKeyHex = Array.from(thresholdKey).map(b => b.toString(16).padStart(2, '0')).join('')
     appendOutput(`Threshold Public Key (hex): ${thresholdKeyHex}`)
 
-    // Store the threshold key globally for potential future use
+    // Store the full result globally for potential future use
     window.generatedThresholdKey = thresholdKey
+    window.generatedSppOutputMessage = sppOutputMessage
+    window.generatedSigningKeypair = signingKeypair
+    window.generatedThresholdResult = result
 
     // Display the threshold key in a dedicated area
     const thresholdKeyOutput = document.createElement('div')
@@ -615,8 +625,10 @@ window['process-all-messages'].onclick = async () => {
     thresholdKeyOutput.style.wordBreak = 'break-all'
     thresholdKeyOutput.innerHTML = `
       <h4>🔐 Generated Threshold Public Key</h4>
-      <p><strong>Size:</strong> ${thresholdKey.length} bytes</p>
-      <p><strong>Hex:</strong> ${thresholdKeyHex}</p>
+      <p><strong>Threshold Key Size:</strong> ${thresholdKey.length} bytes</p>
+      <p><strong>SPP Output Message Size:</strong> ${sppOutputMessage.length} bytes</p>
+      <p><strong>Signing Keypair Size:</strong> ${signingKeypair.length} bytes</p>
+      <p><strong>Threshold Key Hex:</strong> ${thresholdKeyHex}</p>
       <p><strong>First 16 bytes:</strong> ${Array.from(thresholdKey.slice(0, 16)).map(b => b.toString(16).padStart(2, '0')).join(' ')}</p>
     `
 
@@ -634,7 +646,7 @@ window['process-all-messages'].onclick = async () => {
     }
 
     appendOutput('✓ Threshold key processing completed successfully!')
-    appendOutput('The threshold public key is now available for use in threshold signing operations.')
+    appendOutput('The threshold public key, SPP output message, and signing keypair are now available for use in threshold signing operations.')
 
   } catch (err) {
     appendOutput(`Error processing AllMessages: ${err.message}`)
