@@ -141,7 +141,7 @@ test.describe('browser to browser example:', () => {
   })
 
   // Main Integration Test
-  test('should connect to another browser peer and send a message via SS58 addresses', async ({ browser }) => {
+  test('should connect to another browser peer and send a message via SS58 addresses with permission', async ({ browser }) => {
     test.setTimeout(TIMEOUTS.mainTest)
 
     // Create two separate browser contexts (clients)
@@ -162,8 +162,8 @@ test.describe('browser to browser example:', () => {
     await storeSS58Address(pageA, TEST_CONFIG.testSS58AddressA, TEST_CONFIG.testSecretKeyA)
     await storeSS58Address(pageB, TEST_CONFIG.testSS58AddressB, TEST_CONFIG.testSecretKeyB)
 
-    // Connect pageB to pageA via SS58 address
-    await connectViaSS58Address(pageB, TEST_CONFIG.testSS58AddressA)
+    // Connect pageB to pageA via SS58 address (this will now request permission)
+    await connectViaSS58AddressWithPermission(pageB, pageA, TEST_CONFIG.testSS58AddressA)
 
     // Verify that the receiving peer (pageA) also logs the connection
     // The log should contain either the SS58 address or just the connection message
@@ -182,6 +182,103 @@ test.describe('browser to browser example:', () => {
     // Test bidirectional messaging
     await sendMessage(pageA, pageB, 'hello B from A')
     await sendMessage(pageB, pageA, 'hello A from B')
+
+    // Cleanup browser contexts
+    await contextA.close()
+    await contextB.close()
+  })
+
+  // Connection Proof of Possession Test
+  test('should perform mutual proof of possession during connection with permission', async ({ browser }) => {
+    test.setTimeout(TIMEOUTS.mainTest)
+
+    // Create two separate browser contexts (clients)
+    const contextA = await browser.newContext()
+    const contextB = await browser.newContext()
+
+    const pageA = await contextA.newPage()
+    const pageB = await contextB.newPage()
+
+    await pageA.goto(testUrlA)  // Client A connects to first server
+    await pageB.goto(testUrlB)  // Client B connects to second server
+
+    // Establish relay connections for both pages
+    await waitForRelayConnection(pageA)
+    await waitForRelayConnection(pageB)
+
+    // Store SS58 addresses in the relay
+    await storeSS58Address(pageA, TEST_CONFIG.testSS58AddressA, TEST_CONFIG.testSecretKeyA)
+    await storeSS58Address(pageB, TEST_CONFIG.testSS58AddressB, TEST_CONFIG.testSecretKeyB)
+
+    // Connect pageB to pageA via SS58 address with permission (this should trigger proof of possession)
+    await connectViaSS58AddressWithPermission(pageB, pageA, TEST_CONFIG.testSS58AddressA)
+
+    // Verify proof of possession messages in both pages
+    const pageAOutput = pageA.locator(SELECTORS.output)
+    const pageBOutput = pageB.locator(SELECTORS.output)
+
+    // Check that pageB (initiator) shows proof of possession messages
+    await expect(pageBOutput).toContainText('Initiating connection proof of possession...')
+    await expect(pageBOutput).toContainText('Received challenge:')
+    await expect(pageBOutput).toContainText('Our signature verified!')
+    await expect(pageBOutput).toContainText('Received mutual challenge:')
+    await expect(pageBOutput).toContainText('Mutual connection proof of possession completed!')
+
+    // Check that pageA (acceptor) shows proof of possession messages
+    await expect(pageAOutput).toContainText('Generated connection challenge for peer:')
+    await expect(pageAOutput).toContainText('Connection challenge verified for peer:')
+    await expect(pageAOutput).toContainText('Generated mutual challenge for peer:')
+    await expect(pageAOutput).toContainText('Mutual connection challenge verified - connection established!')
+
+    // Test bidirectional messaging after proof of possession
+    await sendMessage(pageA, pageB, 'hello B from A after PoP')
+    await sendMessage(pageB, pageA, 'hello A from B after PoP')
+
+    // Cleanup browser contexts
+    await contextA.close()
+    await contextB.close()
+  })
+
+  // Connection Permission Rejection Test
+  test('should handle permission rejection gracefully', async ({ browser }) => {
+    test.setTimeout(TIMEOUTS.mainTest)
+
+    // Create two separate browser contexts (clients)
+    const contextA = await browser.newContext()
+    const contextB = await browser.newContext()
+
+    const pageA = await contextA.newPage()
+    const pageB = await contextB.newPage()
+
+    await pageA.goto(testUrlA)  // Client A connects to first server
+    await pageB.goto(testUrlB)  // Client B connects to second server
+
+    // Establish relay connections for both pages
+    await waitForRelayConnection(pageA)
+    await waitForRelayConnection(pageB)
+
+    // Store SS58 addresses in the relay
+    await storeSS58Address(pageA, TEST_CONFIG.testSS58AddressA, TEST_CONFIG.testSecretKeyA)
+    await storeSS58Address(pageB, TEST_CONFIG.testSS58AddressB, TEST_CONFIG.testSecretKeyB)
+
+    // Start connection request from pageB
+    await pageB.fill(SELECTORS.ss58Address, TEST_CONFIG.testSS58AddressA)
+    await pageB.click(SELECTORS.connectViaAddressButton)
+
+    // Wait for permission request to be sent
+    const pageBOutput = pageB.locator(SELECTORS.output)
+    await expect(pageBOutput).toContainText(`Requesting connection to: ${TEST_CONFIG.testSS58AddressA}`)
+    await expect(pageBOutput).toContainText('Permission request sent')
+
+    // Wait for permission request to appear on pageA and reject it
+    const permissionRequestsSection = pageA.locator('#permission-requests')
+    await expect(permissionRequestsSection).toContainText('Incoming Connection Request', { timeout: 10000 })
+
+    const rejectButton = permissionRequestsSection.locator('button:has-text("Reject")')
+    await rejectButton.click()
+
+    // Verify that pageB shows permission rejection
+    await expect(pageBOutput).toContainText('Connection permission was rejected')
 
     // Cleanup browser contexts
     await contextA.close()
@@ -230,4 +327,29 @@ const connectViaSS58Address = async (page, addressToConnect) => {
   await expect(outputLocator).toContainText(`Looking up: ${addressToConnect}`)
   await expect(outputLocator).toContainText('Found:')
   await expect(outputLocator).toContainText('Connected to peer!', { timeout: TIMEOUTS.peerConnection })
+}
+
+// SS58 Address Connection with Permission Test
+const connectViaSS58AddressWithPermission = async (requesterPage, acceptorPage, addressToConnect) => {
+  // Start the connection request from the requester page
+  await requesterPage.fill(SELECTORS.ss58Address, addressToConnect)
+  await requesterPage.click(SELECTORS.connectViaAddressButton)
+
+  // Wait for permission request to be sent
+  const requesterOutput = requesterPage.locator(SELECTORS.output)
+  await expect(requesterOutput).toContainText(`Requesting connection to: ${addressToConnect}`)
+  await expect(requesterOutput).toContainText('Permission request sent')
+
+  // Wait for permission request to appear on acceptor page
+  const permissionRequestsSection = acceptorPage.locator('#permission-requests')
+  await expect(permissionRequestsSection).toContainText('Incoming Connection Request', { timeout: 10000 })
+  await expect(permissionRequestsSection).toContainText('From:')
+
+  // Accept the permission request
+  const acceptButton = permissionRequestsSection.locator('button:has-text("Accept")')
+  await acceptButton.click()
+
+  // Wait for connection to be established
+  await expect(requesterOutput).toContainText('Permission granted! Proceeding with connection...')
+  await expect(requesterOutput).toContainText('Connected to peer!', { timeout: TIMEOUTS.peerConnection })
 }

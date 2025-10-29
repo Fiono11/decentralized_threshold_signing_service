@@ -19,6 +19,8 @@ import { hexToU8a } from '@polkadot/util'
 const KV_PROTOCOL = '/libp2p/examples/kv/1.0.0'
 const KV_QUERY_PROTOCOL = '/libp2p/examples/kv-query/1.0.0'
 const PROOF_OF_POSSESSION_PROTOCOL = '/libp2p/examples/proof-of-possession/1.0.0'
+const CONNECTION_CHALLENGE_PROTOCOL = '/libp2p/examples/connection-challenge/1.0.0'
+const CONNECTION_PERMISSION_PROTOCOL = '/libp2p/examples/connection-permission/1.0.0'
 const HARDCODED_PEER_ID = '12D3KooWA1bysjrTACSWqf6q172inxvwKHUxAnBtVgaVDKMxpZtx'
 const EXTERNAL_PORT = '8080'
 const MAX_RESERVATIONS = Infinity
@@ -31,6 +33,9 @@ const kvStore = new Map()
 
 // Challenge store for proof of possession
 const challengeStore = new Map()
+
+// Permission request store for connection permissions
+const permissionRequests = new Map()
 
 // Utility Functions
 const logInfo = (message) => console.log(message)
@@ -440,11 +445,203 @@ const setupProofOfPossessionHandler = (server, kvStore) => {
   })
 }
 
+// Connection Permission Handler Functions
+const processPermissionRequest = async (request, kvStore) => {
+  if (request.action === 'request') {
+    // Peer A wants to connect to Peer B - forward the request
+    const { targetSS58Address, requesterSS58Address, requesterPeerId } = request
+
+    // Validate that the target address exists in the store
+    const targetData = kvStore.get(targetSS58Address)
+    if (!targetData) {
+      return createErrorResponse('Target peer not found')
+    }
+
+    // Store the permission request
+    const requestId = crypto.randomUUID()
+    const expiresAt = Date.now() + (10 * 60 * 1000) // 10 minutes
+    permissionRequests.set(requestId, {
+      targetSS58Address,
+      requesterSS58Address,
+      requesterPeerId,
+      status: 'pending',
+      expiresAt,
+      createdAt: Date.now()
+    })
+
+    logInfo(`Permission request ${requestId}: ${requesterSS58Address} wants to connect to ${targetSS58Address}`)
+
+    return createSuccessResponse({
+      requestId,
+      message: 'Permission request forwarded'
+    })
+
+  } else if (request.action === 'respond') {
+    // Target peer is responding to a permission request
+    const { requestId, accepted } = request
+
+    const permissionRequest = permissionRequests.get(requestId)
+    if (!permissionRequest) {
+      return createErrorResponse('Permission request not found')
+    }
+
+    if (Date.now() > permissionRequest.expiresAt) {
+      permissionRequests.delete(requestId)
+      return createErrorResponse('Permission request has expired')
+    }
+
+    // Update the request status
+    permissionRequest.status = accepted ? 'accepted' : 'rejected'
+    permissionRequest.respondedAt = Date.now()
+
+    logInfo(`Permission request ${requestId}: ${accepted ? 'accepted' : 'rejected'}`)
+
+    return createSuccessResponse({
+      message: `Permission request ${accepted ? 'accepted' : 'rejected'}`,
+      accepted
+    })
+
+  } else if (request.action === 'check') {
+    // Check if a permission request exists for a specific target
+    const { targetSS58Address } = request
+
+    // Find pending requests for this target
+    const pendingRequests = Array.from(permissionRequests.values())
+      .filter(req => req.targetSS58Address === targetSS58Address && req.status === 'pending')
+      .map(req => ({
+        requestId: Array.from(permissionRequests.entries()).find(([id, r]) => r === req)?.[0],
+        requesterSS58Address: req.requesterSS58Address,
+        requesterPeerId: req.requesterPeerId,
+        createdAt: req.createdAt
+      }))
+
+    return createSuccessResponse({
+      pendingRequests,
+      count: pendingRequests.length
+    })
+
+  } else if (request.action === 'get_status') {
+    // Get the status of a specific permission request
+    const { requestId } = request
+
+    const permissionRequest = permissionRequests.get(requestId)
+    if (!permissionRequest) {
+      return createErrorResponse('Permission request not found')
+    }
+
+    return createSuccessResponse({
+      requestId,
+      status: permissionRequest.status,
+      accepted: permissionRequest.status === 'accepted',
+      respondedAt: permissionRequest.respondedAt
+    })
+
+  } else {
+    throw new Error('Invalid action. Must be "request", "respond", "check", or "get_status"')
+  }
+}
+
+// Connection Challenge Handler Functions
+const processConnectionChallengeRequest = async (request, kvStore) => {
+  // Connection challenges are handled peer-to-peer, not through the relay
+  // The relay only facilitates the initial connection discovery
+  // This handler is a placeholder for future relay-based connection challenges if needed
+  return createErrorResponse('Connection challenges are handled peer-to-peer')
+}
+
+const handlePermissionRequestStream = async (streamReader, streamWriter, kvStore) => {
+  while (true) {
+    const data = await streamReader.read()
+    if (data === null) {
+      break // End of stream
+    }
+
+    const message = toString(data.subarray())
+    let response
+
+    try {
+      const request = JSON.parse(message)
+      response = await processPermissionRequest(request, kvStore)
+    } catch (error) {
+      if (error instanceof SyntaxError) {
+        logError(`Invalid JSON: ${message}`)
+        response = createErrorResponse('Invalid JSON')
+      } else {
+        logError(`Permission request error: ${error.message}`)
+        response = createErrorResponse(error.message)
+      }
+    }
+
+    await writeResponse(streamWriter, response)
+  }
+}
+
+const handleConnectionChallengeStream = async (streamReader, streamWriter, kvStore) => {
+  while (true) {
+    const data = await streamReader.read()
+    if (data === null) {
+      break // End of stream
+    }
+
+    const message = toString(data.subarray())
+    let response
+
+    try {
+      const request = JSON.parse(message)
+      response = await processConnectionChallengeRequest(request, kvStore)
+    } catch (error) {
+      if (error instanceof SyntaxError) {
+        logError(`Invalid JSON: ${message}`)
+        response = createErrorResponse('Invalid JSON')
+      } else {
+        logError(`Connection challenge error: ${error.message}`)
+        response = createErrorResponse(error.message)
+      }
+    }
+
+    await writeResponse(streamWriter, response)
+  }
+}
+
+// Connection Permission Protocol Handler
+const setupConnectionPermissionHandler = (server, kvStore) => {
+  server.handle(CONNECTION_PERMISSION_PROTOCOL, async ({ stream, connection }) => {
+    const streamReader = byteStream(stream)
+    const streamWriter = byteStream(stream)
+
+    try {
+      await handlePermissionRequestStream(streamReader, streamWriter, kvStore)
+    } catch (error) {
+      if (error.code !== STREAM_ABORT_ERROR) {
+        logError(`Permission request stream error: ${error.message}`)
+      }
+    }
+  })
+}
+
+// Connection Challenge Protocol Handler
+const setupConnectionChallengeHandler = (server, kvStore) => {
+  server.handle(CONNECTION_CHALLENGE_PROTOCOL, async ({ stream, connection }) => {
+    const streamReader = byteStream(stream)
+    const streamWriter = byteStream(stream)
+
+    try {
+      await handleConnectionChallengeStream(streamReader, streamWriter, kvStore)
+    } catch (error) {
+      if (error.code !== STREAM_ABORT_ERROR) {
+        logError(`Connection challenge stream error: ${error.message}`)
+      }
+    }
+  })
+}
+
 // Main Handler Setup Function
 export function setupRelayHandlers(server, kvStore) {
   setupKvStorageHandler(server, kvStore)
   setupKvQueryHandler(server, kvStore)
   setupProofOfPossessionHandler(server, kvStore)
+  setupConnectionChallengeHandler(server, kvStore)
+  setupConnectionPermissionHandler(server, kvStore)
 }
 
 // Server Startup and Logging
@@ -452,7 +649,7 @@ const logServerInfo = (server) => {
   logInfo('Relay server started:')
   logInfo(`Peer ID: ${server.peerId.toString()}`)
   logInfo(`Listening on: ${server.getMultiaddrs().map(ma => ma.toString()).join(', ')}`)
-  logInfo('Protocols: KV storage, KV query, Proof of Possession ready')
+  logInfo('Protocols: KV storage, KV query, Proof of Possession, Connection Challenge, Connection Permission ready')
 }
 
 // Standalone Server Startup

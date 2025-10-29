@@ -13,7 +13,7 @@ import { byteStream } from 'it-byte-stream'
 import { createLibp2p } from 'libp2p'
 import { fromString, toString } from 'uint8arrays'
 import { decodeAddress, encodeAddress } from '@polkadot/keyring'
-import { cryptoWaitReady, sr25519Sign, sr25519PairFromSeed } from '@polkadot/util-crypto'
+import { cryptoWaitReady, sr25519Sign, sr25519Verify, sr25519PairFromSeed } from '@polkadot/util-crypto'
 import { hexToU8a } from '@polkadot/util'
 
 // Constants
@@ -22,6 +22,8 @@ const CHAT_PROTOCOL = '/libp2p/examples/chat/1.0.0'
 const KV_PROTOCOL = '/libp2p/examples/kv/1.0.0'
 const KV_QUERY_PROTOCOL = '/libp2p/examples/kv-query/1.0.0'
 const PROOF_OF_POSSESSION_PROTOCOL = '/libp2p/examples/proof-of-possession/1.0.0'
+const CONNECTION_CHALLENGE_PROTOCOL = '/libp2p/examples/connection-challenge/1.0.0'
+const CONNECTION_PERMISSION_PROTOCOL = '/libp2p/examples/connection-permission/1.0.0'
 const CONNECTION_TIMEOUT = 10000
 const STREAM_TIMEOUT = 5000
 const CHAT_STREAM_TIMEOUT = 5000
@@ -36,6 +38,9 @@ let chatStream
 let mySS58Address = null
 let mySecretKey = null
 let cryptoReady = false
+let connectionChallenges = new Map() // Store pending connection challenges
+let pendingPermissionRequests = new Map() // Store incoming permission requests
+let outgoingPermissionRequests = new Map() // Store outgoing permission requests
 
 // Utility Functions
 const appendOutput = (message) => {
@@ -110,6 +115,399 @@ const signatureToHex = (signature) => {
   return '0x' + Array.from(signature).map(b => b.toString(16).padStart(2, '0')).join('')
 }
 
+// Generate a random challenge for connection proof of possession
+const generateConnectionChallenge = () => {
+  const challenge = crypto.getRandomValues(new Uint8Array(32))
+  return Array.from(challenge).map(b => b.toString(16).padStart(2, '0')).join('')
+}
+
+// Handle connection challenge requests
+const handleConnectionChallengeRequest = async (request, connection) => {
+  if (!mySS58Address || !mySecretKey) {
+    return { success: false, error: 'No SS58 address or secret key available' }
+  }
+
+  if (request.action === 'initiate') {
+    // Peer A wants to connect - generate challenge for them
+    const challenge = generateConnectionChallenge()
+    const peerId = connection.remotePeer.toString()
+
+    // Store challenge with expiration (5 minutes)
+    const expiresAt = Date.now() + (5 * 60 * 1000)
+    connectionChallenges.set(peerId, {
+      challenge,
+      expiresAt,
+      status: 'pending'
+    })
+
+    appendOutput(`Generated connection challenge for peer: ${peerId}`)
+    return { success: true, challenge }
+
+  } else if (request.action === 'respond') {
+    // Peer A is responding with their signature
+    const { challenge, signature } = request
+    const peerId = connection.remotePeer.toString()
+
+    // Verify the challenge exists and is not expired
+    const storedChallenge = connectionChallenges.get(peerId)
+    if (!storedChallenge || Date.now() > storedChallenge.expiresAt) {
+      connectionChallenges.delete(peerId)
+      return { success: false, error: 'Challenge expired or not found' }
+    }
+
+    if (storedChallenge.challenge !== challenge) {
+      return { success: false, error: 'Invalid challenge' }
+    }
+
+    // Verify the signature
+    const isValid = await verifyConnectionSignature(request.ss58Address, challenge, signature)
+    if (!isValid) {
+      return { success: false, error: 'Invalid signature' }
+    }
+
+    // Update challenge status
+    storedChallenge.status = 'verified'
+    storedChallenge.remoteSS58Address = request.ss58Address
+
+    appendOutput(`Connection challenge verified for peer: ${peerId}`)
+    return { success: true, message: 'Challenge verified' }
+
+  } else if (request.action === 'challenge') {
+    // Peer B wants to challenge Peer A back
+    const peerId = connection.remotePeer.toString()
+    const storedChallenge = connectionChallenges.get(peerId)
+
+    if (!storedChallenge || storedChallenge.status !== 'verified') {
+      return { success: false, error: 'No verified connection found' }
+    }
+
+    // Generate our challenge for them
+    const ourChallenge = generateConnectionChallenge()
+    storedChallenge.ourChallenge = ourChallenge
+    storedChallenge.ourChallengeExpires = Date.now() + (5 * 60 * 1000)
+
+    appendOutput(`Generated mutual challenge for peer: ${peerId}`)
+    return { success: true, challenge: ourChallenge }
+
+  } else if (request.action === 'verify') {
+    // Peer A is responding to our challenge
+    const { challenge, signature } = request
+    const peerId = connection.remotePeer.toString()
+    const storedChallenge = connectionChallenges.get(peerId)
+
+    if (!storedChallenge || !storedChallenge.ourChallenge) {
+      return { success: false, error: 'No pending challenge found' }
+    }
+
+    if (Date.now() > storedChallenge.ourChallengeExpires) {
+      connectionChallenges.delete(peerId)
+      return { success: false, error: 'Challenge expired' }
+    }
+
+    if (storedChallenge.ourChallenge !== challenge) {
+      return { success: false, error: 'Invalid challenge' }
+    }
+
+    // Verify the signature
+    const isValid = await verifyConnectionSignature(request.ss58Address, challenge, signature)
+    if (!isValid) {
+      return { success: false, error: 'Invalid signature' }
+    }
+
+    // Both challenges verified - connection established
+    storedChallenge.status = 'established'
+    connectionChallenges.delete(peerId) // Clean up
+
+    appendOutput(`Mutual connection challenge verified - connection established!`)
+    return { success: true, message: 'Connection established' }
+
+  } else {
+    return { success: false, error: 'Invalid action' }
+  }
+}
+
+// Verify connection signature
+const verifyConnectionSignature = async (ss58Address, challenge, signature) => {
+  try {
+    await initializeCrypto()
+
+    // Convert challenge to bytes
+    const challengeBytes = hexToU8a('0x' + challenge)
+
+    // Convert signature to Uint8Array
+    const signatureBytes = typeof signature === 'string'
+      ? hexToU8a(signature.startsWith('0x') ? signature : '0x' + signature)
+      : new Uint8Array(signature)
+
+    // Decode the SS58 address to get the public key
+    const publicKey = decodeAddress(ss58Address)
+
+    // Verify the signature
+    const isValid = sr25519Verify(challengeBytes, signatureBytes, publicKey)
+
+    return isValid
+  } catch (error) {
+    appendOutput(`Connection signature verification failed: ${error.message}`)
+    return false
+  }
+}
+
+// Permission Request Functions
+const requestConnectionPermission = async (targetSS58Address) => {
+  const relayConnection = getRelayConnection()
+  if (!relayConnection) {
+    throw new Error('No relay connection found')
+  }
+
+  if (!mySS58Address) {
+    throw new Error('No SS58 address available')
+  }
+
+  appendOutput(`Requesting connection permission from: ${targetSS58Address}`)
+  const stream = await node.dialProtocol(relayConnection.remoteAddr, CONNECTION_PERMISSION_PROTOCOL, {
+    signal: AbortSignal.timeout(STREAM_TIMEOUT)
+  })
+
+  try {
+    const streamWriter = byteStream(stream)
+    const streamReader = byteStream(stream)
+
+    const request = {
+      action: 'request',
+      targetSS58Address,
+      requesterSS58Address: mySS58Address,
+      requesterPeerId: node.peerId.toString()
+    }
+    const message = JSON.stringify(request)
+
+    await streamWriter.write(fromString(message))
+    const response = await streamReader.read()
+
+    if (response === null) {
+      throw new Error('No response from relay')
+    }
+
+    const responseText = toString(response.subarray())
+    const parsed = JSON.parse(responseText)
+
+    if (parsed.success) {
+      const requestId = parsed.requestId
+      outgoingPermissionRequests.set(requestId, {
+        targetSS58Address,
+        status: 'pending',
+        createdAt: Date.now()
+      })
+      appendOutput(`Permission request sent. Request ID: ${requestId}`)
+      return requestId
+    } else {
+      throw new Error(`Permission request failed: ${parsed.error}`)
+    }
+  } finally {
+    await stream.close()
+  }
+}
+
+const checkPermissionRequestStatus = async (requestId) => {
+  const relayConnection = getRelayConnection()
+  if (!relayConnection) {
+    throw new Error('No relay connection found')
+  }
+
+  const stream = await node.dialProtocol(relayConnection.remoteAddr, CONNECTION_PERMISSION_PROTOCOL, {
+    signal: AbortSignal.timeout(STREAM_TIMEOUT)
+  })
+
+  try {
+    const streamWriter = byteStream(stream)
+    const streamReader = byteStream(stream)
+
+    const request = { action: 'get_status', requestId }
+    const message = JSON.stringify(request)
+
+    await streamWriter.write(fromString(message))
+    const response = await streamReader.read()
+
+    if (response === null) {
+      throw new Error('No response from relay')
+    }
+
+    const responseText = toString(response.subarray())
+    const parsed = JSON.parse(responseText)
+
+    if (parsed.success) {
+      return parsed
+    } else {
+      throw new Error(`Status check failed: ${parsed.error}`)
+    }
+  } finally {
+    await stream.close()
+  }
+}
+
+const respondToPermissionRequest = async (requestId, accepted) => {
+  const relayConnection = getRelayConnection()
+  if (!relayConnection) {
+    throw new Error('No relay connection found')
+  }
+
+  appendOutput(`${accepted ? 'Accepting' : 'Rejecting'} permission request: ${requestId}`)
+  const stream = await node.dialProtocol(relayConnection.remoteAddr, CONNECTION_PERMISSION_PROTOCOL, {
+    signal: AbortSignal.timeout(STREAM_TIMEOUT)
+  })
+
+  try {
+    const streamWriter = byteStream(stream)
+    const streamReader = byteStream(stream)
+
+    const request = { action: 'respond', requestId, accepted }
+    const message = JSON.stringify(request)
+
+    await streamWriter.write(fromString(message))
+    const response = await streamReader.read()
+
+    if (response === null) {
+      throw new Error('No response from relay')
+    }
+
+    const responseText = toString(response.subarray())
+    const parsed = JSON.parse(responseText)
+
+    if (parsed.success) {
+      // Remove from pending requests
+      pendingPermissionRequests.delete(requestId)
+      appendOutput(`Permission request ${accepted ? 'accepted' : 'rejected'}`)
+      return true
+    } else {
+      throw new Error(`Response failed: ${parsed.error}`)
+    }
+  } finally {
+    await stream.close()
+  }
+}
+
+const checkForIncomingPermissionRequests = async () => {
+  if (!mySS58Address) return
+
+  const relayConnection = getRelayConnection()
+  if (!relayConnection) return
+
+  const stream = await node.dialProtocol(relayConnection.remoteAddr, CONNECTION_PERMISSION_PROTOCOL, {
+    signal: AbortSignal.timeout(STREAM_TIMEOUT)
+  })
+
+  try {
+    const streamWriter = byteStream(stream)
+    const streamReader = byteStream(stream)
+
+    const request = { action: 'check', targetSS58Address: mySS58Address }
+    const message = JSON.stringify(request)
+
+    await streamWriter.write(fromString(message))
+    const response = await streamReader.read()
+
+    if (response === null) {
+      return
+    }
+
+    const responseText = toString(response.subarray())
+    const parsed = JSON.parse(responseText)
+
+    if (parsed.success && parsed.pendingRequests.length > 0) {
+      for (const req of parsed.pendingRequests) {
+        if (!pendingPermissionRequests.has(req.requestId)) {
+          pendingPermissionRequests.set(req.requestId, {
+            requesterSS58Address: req.requesterSS58Address,
+            requesterPeerId: req.requesterPeerId,
+            createdAt: req.createdAt
+          })
+          displayPermissionRequest(req.requestId, req.requesterSS58Address)
+        }
+      }
+    }
+  } finally {
+    await stream.close()
+  }
+}
+
+const displayPermissionRequest = (requestId, requesterSS58Address) => {
+  const permissionRequestsContainer = document.getElementById('permission-requests')
+
+  // Clear the placeholder text if it exists
+  const placeholder = permissionRequestsContainer.querySelector('p')
+  if (placeholder) {
+    placeholder.remove()
+  }
+
+  const div = document.createElement('div')
+  div.className = 'permission-request'
+  div.id = `permission-request-${requestId}`
+  div.innerHTML = `
+    <div style="border: 2px solid #007bff; padding: 15px; margin: 10px 0; border-radius: 8px; background-color: #f8f9fa; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+        <strong style="color: #007bff; font-size: 16px;">🔗 Incoming Connection Request</strong>
+        <span style="font-size: 12px; color: #666; background-color: #e9ecef; padding: 2px 8px; border-radius: 4px;">${requestId.substring(0, 8)}...</span>
+      </div>
+      <div style="margin-bottom: 15px;">
+        <strong>From:</strong> <span style="font-family: monospace; font-size: 14px;">${requesterSS58Address}</span><br>
+        <strong>Time:</strong> <span style="color: #666;">${new Date().toLocaleTimeString()}</span>
+      </div>
+      <div style="display: flex; gap: 10px;">
+        <button onclick="acceptPermissionRequest('${requestId}')" style="background-color: #28a745; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-weight: bold; transition: background-color 0.2s;">✓ Accept</button>
+        <button onclick="rejectPermissionRequest('${requestId}')" style="background-color: #dc3545; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-weight: bold; transition: background-color 0.2s;">✗ Reject</button>
+      </div>
+    </div>
+  `
+  permissionRequestsContainer.appendChild(div)
+
+  // Also log to output
+  appendOutput(`New connection request from ${requesterSS58Address} (ID: ${requestId})`)
+}
+
+// Global functions for permission request buttons
+window.acceptPermissionRequest = async (requestId) => {
+  try {
+    await respondToPermissionRequest(requestId, true)
+    // Remove the specific permission request UI
+    const permissionDiv = document.getElementById(`permission-request-${requestId}`)
+    if (permissionDiv) {
+      permissionDiv.remove()
+    }
+
+    // If no more permission requests, show placeholder
+    const permissionRequestsContainer = document.getElementById('permission-requests')
+    const remainingRequests = permissionRequestsContainer.querySelectorAll('.permission-request')
+    if (remainingRequests.length === 0) {
+      const placeholder = document.createElement('p')
+      placeholder.textContent = 'Incoming connection requests will appear here. You can accept or reject them.'
+      permissionRequestsContainer.appendChild(placeholder)
+    }
+  } catch (error) {
+    appendOutput(`Error accepting permission request: ${error.message}`)
+  }
+}
+
+window.rejectPermissionRequest = async (requestId) => {
+  try {
+    await respondToPermissionRequest(requestId, false)
+    // Remove the specific permission request UI
+    const permissionDiv = document.getElementById(`permission-request-${requestId}`)
+    if (permissionDiv) {
+      permissionDiv.remove()
+    }
+
+    // If no more permission requests, show placeholder
+    const permissionRequestsContainer = document.getElementById('permission-requests')
+    const remainingRequests = permissionRequestsContainer.querySelectorAll('.permission-request')
+    if (remainingRequests.length === 0) {
+      const placeholder = document.createElement('p')
+      placeholder.textContent = 'Incoming connection requests will appear here. You can accept or reject them.'
+      permissionRequestsContainer.appendChild(placeholder)
+    }
+  } catch (error) {
+    appendOutput(`Error rejecting permission request: ${error.message}`)
+  }
+}
+
 // LibP2P Node Configuration
 const node = await createLibp2p({
   addresses: {
@@ -156,6 +554,16 @@ const connectToRelay = async () => {
 
 // Initialize connection to relay
 connectToRelay()
+
+// Start periodic checking for incoming permission requests
+setInterval(async () => {
+  try {
+    await checkForIncomingPermissionRequests()
+  } catch (error) {
+    // Silently handle errors to avoid spamming the console
+    // The error might be due to no relay connection or no SS58 address
+  }
+}, 10000) // Check every 10 seconds
 
 // UI Update Functions
 const updateConnList = () => {
@@ -206,6 +614,36 @@ node.handle(CHAT_PROTOCOL, async ({ stream }) => {
       break // End of stream
     }
     appendOutput(`Received: '${toString(buffer.subarray())}'`)
+  }
+})
+
+// Connection Challenge Protocol Handler
+node.handle(CONNECTION_CHALLENGE_PROTOCOL, async ({ stream, connection }) => {
+  const streamReader = byteStream(stream)
+  const streamWriter = byteStream(stream)
+
+  try {
+    while (true) {
+      const data = await streamReader.read()
+      if (data === null) {
+        break // End of stream
+      }
+
+      const message = toString(data.subarray())
+      let response
+
+      try {
+        const request = JSON.parse(message)
+        response = await handleConnectionChallengeRequest(request, connection)
+      } catch (error) {
+        appendOutput(`Connection challenge error: ${error.message}`)
+        response = { success: false, error: error.message }
+      }
+
+      await streamWriter.write(fromString(JSON.stringify(response)))
+    }
+  } catch (error) {
+    appendOutput(`Connection challenge stream error: ${error.message}`)
   }
 })
 
@@ -463,11 +901,175 @@ const connectToPeer = async (peerMultiaddrString) => {
     const peerMultiaddr = multiaddr(peerMultiaddrString)
     await node.dial(peerMultiaddr, { signal: dialSignal })
     appendOutput('Connected to peer!')
+
+    // Perform connection proof of possession
+    await performConnectionProofOfPossession(peerMultiaddr)
   } catch (error) {
     if (error.name === 'AbortError') {
       throw new Error('Connection timeout')
     } else {
       throw new Error(`Connection failed: ${error.message}`)
+    }
+  }
+}
+
+const connectToPeerWithPermission = async (targetSS58Address) => {
+  if (!mySS58Address) {
+    throw new Error('No SS58 address available for permission request')
+  }
+
+  try {
+    // Step 1: Request permission
+    const requestId = await requestConnectionPermission(targetSS58Address)
+    appendOutput(`Waiting for permission from ${targetSS58Address}...`)
+
+    // Step 2: Poll for permission status
+    let permissionGranted = false
+    let attempts = 0
+    const maxAttempts = 60 // 5 minutes with 5-second intervals
+
+    while (!permissionGranted && attempts < maxAttempts) {
+      await new Promise(resolve => setTimeout(resolve, 5000)) // Wait 5 seconds
+
+      try {
+        const status = await checkPermissionRequestStatus(requestId)
+        if (status.accepted) {
+          permissionGranted = true
+          appendOutput(`Permission granted! Proceeding with connection...`)
+        } else if (status.status === 'rejected') {
+          throw new Error('Connection permission was rejected')
+        }
+        // If still pending, continue waiting
+      } catch (error) {
+        if (error.message.includes('Permission request not found')) {
+          throw new Error('Permission request expired or was cancelled')
+        }
+        throw error
+      }
+
+      attempts++
+    }
+
+    if (!permissionGranted) {
+      throw new Error('Permission request timed out')
+    }
+
+    // Step 3: Get the target peer's multiaddr and connect
+    const peerMultiaddrString = await queryRelayForAddress(targetSS58Address)
+    appendOutput(`Found peer address: ${peerMultiaddrString}`)
+
+    // Step 4: Connect to the peer
+    await connectToPeer(peerMultiaddrString)
+
+    // Clean up the outgoing request
+    outgoingPermissionRequests.delete(requestId)
+
+  } catch (error) {
+    appendOutput(`Permission-based connection failed: ${error.message}`)
+    throw error
+  }
+}
+
+// Perform connection proof of possession
+const performConnectionProofOfPossession = async (peerMultiaddr) => {
+  if (!mySS58Address || !mySecretKey) {
+    throw new Error('No SS58 address or secret key available for connection proof of possession')
+  }
+
+  let stream
+  try {
+    // Step 1: Initiate connection challenge
+    appendOutput('Initiating connection proof of possession...')
+    stream = await node.dialProtocol(peerMultiaddr, CONNECTION_CHALLENGE_PROTOCOL, {
+      signal: AbortSignal.timeout(STREAM_TIMEOUT)
+    })
+
+    const streamWriter = byteStream(stream)
+    const streamReader = byteStream(stream)
+
+    // Step 2: Request challenge from peer
+    const initiateRequest = { action: 'initiate' }
+    await streamWriter.write(fromString(JSON.stringify(initiateRequest)))
+
+    const challengeResponse = await streamReader.read()
+    if (challengeResponse === null) {
+      throw new Error('No challenge response from peer')
+    }
+
+    const challengeData = JSON.parse(toString(challengeResponse.subarray()))
+    if (!challengeData.success) {
+      throw new Error(`Challenge request failed: ${challengeData.error}`)
+    }
+
+    const challenge = challengeData.challenge
+    appendOutput(`Received challenge: ${challenge}`)
+
+    // Step 3: Sign the challenge and respond
+    const signature = await signMessage(challenge, mySecretKey)
+    const respondRequest = {
+      action: 'respond',
+      ss58Address: mySS58Address,
+      challenge,
+      signature: signatureToHex(signature)
+    }
+
+    await streamWriter.write(fromString(JSON.stringify(respondRequest)))
+    const respondResponse = await streamReader.read()
+
+    if (respondResponse === null) {
+      throw new Error('No response to our signature')
+    }
+
+    const respondData = JSON.parse(toString(respondResponse.subarray()))
+    if (!respondData.success) {
+      throw new Error(`Signature verification failed: ${respondData.error}`)
+    }
+
+    appendOutput('Our signature verified!')
+
+    // Step 4: Request mutual challenge from peer
+    const challengeRequest = { action: 'challenge' }
+    await streamWriter.write(fromString(JSON.stringify(challengeRequest)))
+
+    const mutualChallengeResponse = await streamReader.read()
+    if (mutualChallengeResponse === null) {
+      throw new Error('No mutual challenge response from peer')
+    }
+
+    const mutualChallengeData = JSON.parse(toString(mutualChallengeResponse.subarray()))
+    if (!mutualChallengeData.success) {
+      throw new Error(`Mutual challenge request failed: ${mutualChallengeData.error}`)
+    }
+
+    const mutualChallenge = mutualChallengeData.challenge
+    appendOutput(`Received mutual challenge: ${mutualChallenge}`)
+
+    // Step 5: Sign the mutual challenge and verify
+    const mutualSignature = await signMessage(mutualChallenge, mySecretKey)
+    const verifyRequest = {
+      action: 'verify',
+      ss58Address: mySS58Address,
+      challenge: mutualChallenge,
+      signature: signatureToHex(mutualSignature)
+    }
+
+    await streamWriter.write(fromString(JSON.stringify(verifyRequest)))
+    const verifyResponse = await streamReader.read()
+
+    if (verifyResponse === null) {
+      throw new Error('No response to our mutual signature')
+    }
+
+    const verifyData = JSON.parse(toString(verifyResponse.subarray()))
+    if (!verifyData.success) {
+      throw new Error(`Mutual signature verification failed: ${verifyData.error}`)
+    }
+
+    appendOutput('Mutual connection proof of possession completed!')
+
+  } finally {
+    if (stream) {
+      await stream.close()
     }
   }
 }
@@ -482,10 +1084,8 @@ window['connect-via-address'].onclick = async () => {
   }
 
   try {
-    appendOutput(`Looking up: ${polkadotAddress}`)
-    const peerMultiaddrString = await queryRelayForAddress(polkadotAddress)
-    appendOutput(`Found: ${peerMultiaddrString}`)
-    await connectToPeer(peerMultiaddrString)
+    appendOutput(`Requesting connection to: ${polkadotAddress}`)
+    await connectToPeerWithPermission(polkadotAddress)
   } catch (error) {
     appendOutput(`Error: ${error.message}`)
   }
