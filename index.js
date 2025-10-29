@@ -15,6 +15,7 @@ import { fromString, toString } from 'uint8arrays'
 import { decodeAddress, encodeAddress } from '@polkadot/keyring'
 import { cryptoWaitReady, sr25519Sign, sr25519Verify, sr25519PairFromSeed } from '@polkadot/util-crypto'
 import { hexToU8a } from '@polkadot/util'
+import { createEd25519PeerId } from '@libp2p/peer-id-factory'
 
 // Constants
 const WEBRTC_CODE = WebRTC.code
@@ -32,15 +33,32 @@ const CHAT_STREAM_TIMEOUT = 5000
 const output = document.getElementById('output')
 const sendSection = document.getElementById('send-section')
 
+// Session State Class
+class SessionState {
+  constructor() {
+    this.peerMultiaddr = null
+    this.chatStream = null
+    this.mySS58Address = null
+    this.mySecretKey = null
+    this.connectionChallenges = new Map() // Store pending connection challenges
+    this.pendingPermissionRequests = new Map() // Store incoming permission requests
+    this.outgoingPermissionRequests = new Map() // Store outgoing permission requests
+  }
+
+  reset() {
+    this.peerMultiaddr = null
+    this.chatStream = null
+    this.mySS58Address = null
+    this.mySecretKey = null
+    this.connectionChallenges.clear()
+    this.pendingPermissionRequests.clear()
+    this.outgoingPermissionRequests.clear()
+  }
+}
+
 // Global State
-let peerMultiaddr
-let chatStream
-let mySS58Address = null
-let mySecretKey = null
+let sessionState = new SessionState()
 let cryptoReady = false
-let connectionChallenges = new Map() // Store pending connection challenges
-let pendingPermissionRequests = new Map() // Store incoming permission requests
-let outgoingPermissionRequests = new Map() // Store outgoing permission requests
 
 // Utility Functions
 const appendOutput = (message) => {
@@ -51,7 +69,7 @@ const appendOutput = (message) => {
 
 const isWebrtc = (multiaddr) => WebRTC.matches(multiaddr)
 
-const getRelayConnection = () => {
+const getRelayConnection = (node) => {
   const connections = node.getConnections()
   return connections.find(conn => !conn.remoteAddr.protoCodes().includes(WEBRTC_CODE))
 }
@@ -122,8 +140,8 @@ const generateConnectionChallenge = () => {
 }
 
 // Handle connection challenge requests
-const handleConnectionChallengeRequest = async (request, connection) => {
-  if (!mySS58Address || !mySecretKey) {
+const handleConnectionChallengeRequest = async (request, connection, sessionState) => {
+  if (!sessionState.mySS58Address || !sessionState.mySecretKey) {
     return { success: false, error: 'No SS58 address or secret key available' }
   }
 
@@ -134,7 +152,7 @@ const handleConnectionChallengeRequest = async (request, connection) => {
 
     // Store challenge with expiration (5 minutes)
     const expiresAt = Date.now() + (5 * 60 * 1000)
-    connectionChallenges.set(peerId, {
+    sessionState.connectionChallenges.set(peerId, {
       challenge,
       expiresAt,
       status: 'pending'
@@ -149,9 +167,9 @@ const handleConnectionChallengeRequest = async (request, connection) => {
     const peerId = connection.remotePeer.toString()
 
     // Verify the challenge exists and is not expired
-    const storedChallenge = connectionChallenges.get(peerId)
+    const storedChallenge = sessionState.connectionChallenges.get(peerId)
     if (!storedChallenge || Date.now() > storedChallenge.expiresAt) {
-      connectionChallenges.delete(peerId)
+      sessionState.connectionChallenges.delete(peerId)
       return { success: false, error: 'Challenge expired or not found' }
     }
 
@@ -175,7 +193,7 @@ const handleConnectionChallengeRequest = async (request, connection) => {
   } else if (request.action === 'challenge') {
     // Peer B wants to challenge Peer A back
     const peerId = connection.remotePeer.toString()
-    const storedChallenge = connectionChallenges.get(peerId)
+    const storedChallenge = sessionState.connectionChallenges.get(peerId)
 
     if (!storedChallenge || storedChallenge.status !== 'verified') {
       return { success: false, error: 'No verified connection found' }
@@ -193,14 +211,14 @@ const handleConnectionChallengeRequest = async (request, connection) => {
     // Peer A is responding to our challenge
     const { challenge, signature } = request
     const peerId = connection.remotePeer.toString()
-    const storedChallenge = connectionChallenges.get(peerId)
+    const storedChallenge = sessionState.connectionChallenges.get(peerId)
 
     if (!storedChallenge || !storedChallenge.ourChallenge) {
       return { success: false, error: 'No pending challenge found' }
     }
 
     if (Date.now() > storedChallenge.ourChallengeExpires) {
-      connectionChallenges.delete(peerId)
+      sessionState.connectionChallenges.delete(peerId)
       return { success: false, error: 'Challenge expired' }
     }
 
@@ -216,7 +234,7 @@ const handleConnectionChallengeRequest = async (request, connection) => {
 
     // Both challenges verified - connection established
     storedChallenge.status = 'established'
-    connectionChallenges.delete(peerId) // Clean up
+    sessionState.connectionChallenges.delete(peerId) // Clean up
 
     appendOutput(`Mutual connection challenge verified - connection established!`)
     return { success: true, message: 'Connection established' }
@@ -253,13 +271,13 @@ const verifyConnectionSignature = async (ss58Address, challenge, signature) => {
 }
 
 // Permission Request Functions
-const requestConnectionPermission = async (targetSS58Address) => {
-  const relayConnection = getRelayConnection()
+const requestConnectionPermission = async (targetSS58Address, node, sessionState) => {
+  const relayConnection = getRelayConnection(node)
   if (!relayConnection) {
     throw new Error('No relay connection found')
   }
 
-  if (!mySS58Address) {
+  if (!sessionState.mySS58Address) {
     throw new Error('No SS58 address available')
   }
 
@@ -275,7 +293,7 @@ const requestConnectionPermission = async (targetSS58Address) => {
     const request = {
       action: 'request',
       targetSS58Address,
-      requesterSS58Address: mySS58Address,
+      requesterSS58Address: sessionState.mySS58Address,
       requesterPeerId: node.peerId.toString()
     }
     const message = JSON.stringify(request)
@@ -292,7 +310,7 @@ const requestConnectionPermission = async (targetSS58Address) => {
 
     if (parsed.success) {
       const requestId = parsed.requestId
-      outgoingPermissionRequests.set(requestId, {
+      sessionState.outgoingPermissionRequests.set(requestId, {
         targetSS58Address,
         status: 'pending',
         createdAt: Date.now()
@@ -307,8 +325,8 @@ const requestConnectionPermission = async (targetSS58Address) => {
   }
 }
 
-const checkPermissionRequestStatus = async (requestId) => {
-  const relayConnection = getRelayConnection()
+const checkPermissionRequestStatus = async (requestId, node) => {
+  const relayConnection = getRelayConnection(node)
   if (!relayConnection) {
     throw new Error('No relay connection found')
   }
@@ -344,8 +362,8 @@ const checkPermissionRequestStatus = async (requestId) => {
   }
 }
 
-const respondToPermissionRequest = async (requestId, accepted) => {
-  const relayConnection = getRelayConnection()
+const respondToPermissionRequest = async (requestId, accepted, node, sessionState) => {
+  const relayConnection = getRelayConnection(node)
   if (!relayConnection) {
     throw new Error('No relay connection found')
   }
@@ -374,7 +392,7 @@ const respondToPermissionRequest = async (requestId, accepted) => {
 
     if (parsed.success) {
       // Remove from pending requests
-      pendingPermissionRequests.delete(requestId)
+      sessionState.pendingPermissionRequests.delete(requestId)
       appendOutput(`Permission request ${accepted ? 'accepted' : 'rejected'}`)
       return true
     } else {
@@ -385,10 +403,10 @@ const respondToPermissionRequest = async (requestId, accepted) => {
   }
 }
 
-const checkForIncomingPermissionRequests = async () => {
-  if (!mySS58Address) return
+const checkForIncomingPermissionRequests = async (node, sessionState) => {
+  if (!sessionState.mySS58Address) return
 
-  const relayConnection = getRelayConnection()
+  const relayConnection = getRelayConnection(node)
   if (!relayConnection) return
 
   const stream = await node.dialProtocol(relayConnection.remoteAddr, CONNECTION_PERMISSION_PROTOCOL, {
@@ -399,7 +417,7 @@ const checkForIncomingPermissionRequests = async () => {
     const streamWriter = byteStream(stream)
     const streamReader = byteStream(stream)
 
-    const request = { action: 'check', targetSS58Address: mySS58Address }
+    const request = { action: 'check', targetSS58Address: sessionState.mySS58Address }
     const message = JSON.stringify(request)
 
     await streamWriter.write(fromString(message))
@@ -414,8 +432,8 @@ const checkForIncomingPermissionRequests = async () => {
 
     if (parsed.success && parsed.pendingRequests.length > 0) {
       for (const req of parsed.pendingRequests) {
-        if (!pendingPermissionRequests.has(req.requestId)) {
-          pendingPermissionRequests.set(req.requestId, {
+        if (!sessionState.pendingPermissionRequests.has(req.requestId)) {
+          sessionState.pendingPermissionRequests.set(req.requestId, {
             requesterSS58Address: req.requesterSS58Address,
             requesterPeerId: req.requesterPeerId,
             createdAt: req.createdAt
@@ -466,7 +484,7 @@ const displayPermissionRequest = (requestId, requesterSS58Address) => {
 // Global functions for permission request buttons
 window.acceptPermissionRequest = async (requestId) => {
   try {
-    await respondToPermissionRequest(requestId, true)
+    await respondToPermissionRequest(requestId, true, node, sessionState)
     // Remove the specific permission request UI
     const permissionDiv = document.getElementById(`permission-request-${requestId}`)
     if (permissionDiv) {
@@ -488,7 +506,7 @@ window.acceptPermissionRequest = async (requestId) => {
 
 window.rejectPermissionRequest = async (requestId) => {
   try {
-    await respondToPermissionRequest(requestId, false)
+    await respondToPermissionRequest(requestId, false, node, sessionState)
     // Remove the specific permission request UI
     const permissionDiv = document.getElementById(`permission-request-${requestId}`)
     if (permissionDiv) {
@@ -508,38 +526,76 @@ window.rejectPermissionRequest = async (requestId) => {
   }
 }
 
-// LibP2P Node Configuration
-const node = await createLibp2p({
-  addresses: {
-    listen: ['/p2p-circuit', '/webrtc']
-  },
-  transports: [
-    webSockets(),
-    webRTC(),
-    circuitRelayTransport()
-  ],
-  connectionEncrypters: [noise()],
-  streamMuxers: [yamux()],
-  connectionGater: {
-    denyDialMultiaddr: () => false
-  },
-  services: {
-    identify: identify(),
-    identifyPush: identifyPush(),
-    ping: ping()
-  }
-})
+// Session Management
+let node = null
+let sessionId = null
+let permissionRequestInterval = null
 
-await node.start()
+// Initialize a new session with unique Peer ID
+const initializeSession = async () => {
+  try {
+    // Generate a unique Peer ID for this session
+    const peerId = await createEd25519PeerId()
+    sessionId = peerId.toString()
+
+    appendOutput(`Starting new session with Peer ID: ${sessionId}`)
+
+    // Reset session state
+    sessionState.reset()
+
+    // Create LibP2P node with unique Peer ID
+    node = await createLibp2p({
+      peerId,
+      addresses: {
+        listen: ['/p2p-circuit', '/webrtc']
+      },
+      transports: [
+        webSockets(),
+        webRTC(),
+        circuitRelayTransport()
+      ],
+      connectionEncrypters: [noise()],
+      streamMuxers: [yamux()],
+      connectionGater: {
+        denyDialMultiaddr: () => false
+      },
+      services: {
+        identify: identify(),
+        identifyPush: identifyPush(),
+        ping: ping()
+      }
+    })
+
+    await node.start()
+
+    // Set up event listeners
+    setupEventListeners()
+
+    // Connect to relay
+    await connectToRelay()
+
+    // Start periodic checking for incoming permission requests
+    startPermissionRequestPolling()
+
+    appendOutput(`Session initialized successfully`)
+
+  } catch (error) {
+    appendOutput(`Session initialization failed: ${error.message}`)
+    throw error
+  }
+}
 
 // Relay Configuration
-const HARDCODED_RELAY_ADDRESS = '/ip4/127.0.0.1/tcp/8080/ws/p2p/12D3KooWA1bysjrTACSWqf6q172inxvwKHUxAnBtVgaVDKMxpZtx'
+const RELAY_HOST = '127.0.0.1'
+const RELAY_PORT = '8080'
+const RELAY_PEER_ID = '12D3KooWA1bysjrTACSWqf6q172inxvwKHUxAnBtVgaVDKMxpZtx'
+const RELAY_ADDRESS = `/ip4/${RELAY_HOST}/tcp/${RELAY_PORT}/ws/p2p/${RELAY_PEER_ID}`
 
 // Connection Management
 const connectToRelay = async () => {
   try {
     appendOutput('Connecting to relay...')
-    const relayMultiaddr = multiaddr(HARDCODED_RELAY_ADDRESS)
+    const relayMultiaddr = multiaddr(RELAY_ADDRESS)
     const signal = AbortSignal.timeout(CONNECTION_TIMEOUT)
     await node.dial(relayMultiaddr, { signal })
     appendOutput('Connected to relay')
@@ -552,24 +608,131 @@ const connectToRelay = async () => {
   }
 }
 
-// Initialize connection to relay
-connectToRelay()
+// Set up event listeners
+const setupEventListeners = () => {
+  node.addEventListener('connection:open', async (event) => {
+    const remoteAddr = event.detail.remoteAddr.toString()
+    const logMessage = `Peer connected: ${remoteAddr}`
+    appendOutput(logMessage)
+    updateConnList()
+  })
+
+  node.addEventListener('connection:close', async (event) => {
+    const remoteAddr = event.detail.remoteAddr.toString()
+    const logMessage = `Peer disconnected: ${remoteAddr}`
+    appendOutput(logMessage)
+    updateConnList()
+  })
+
+  node.addEventListener('self:peer:update', updateMultiaddrs)
+
+  // Set up protocol handlers
+  setupProtocolHandlers()
+}
+
+// Set up protocol handlers
+const setupProtocolHandlers = () => {
+  // Chat Protocol Handler
+  node.handle(CHAT_PROTOCOL, async ({ stream }) => {
+    sessionState.chatStream = byteStream(stream)
+    while (true) {
+      const buffer = await sessionState.chatStream.read()
+      if (buffer === null) {
+        break // End of stream
+      }
+      appendOutput(`Received: '${toString(buffer.subarray())}'`)
+    }
+  })
+
+  // Connection Challenge Protocol Handler
+  node.handle(CONNECTION_CHALLENGE_PROTOCOL, async ({ stream, connection }) => {
+    const streamReader = byteStream(stream)
+    const streamWriter = byteStream(stream)
+
+    try {
+      while (true) {
+        const data = await streamReader.read()
+        if (data === null) {
+          break // End of stream
+        }
+
+        const message = toString(data.subarray())
+        let response
+
+        try {
+          const request = JSON.parse(message)
+          response = await handleConnectionChallengeRequest(request, connection, sessionState)
+        } catch (error) {
+          appendOutput(`Connection challenge error: ${error.message}`)
+          response = { success: false, error: error.message }
+        }
+
+        await streamWriter.write(fromString(JSON.stringify(response)))
+      }
+    } catch (error) {
+      appendOutput(`Connection challenge stream error: ${error.message}`)
+    }
+  })
+}
 
 // Start periodic checking for incoming permission requests
-setInterval(async () => {
+const startPermissionRequestPolling = () => {
+  permissionRequestInterval = setInterval(async () => {
+    try {
+      await checkForIncomingPermissionRequests(node, sessionState)
+    } catch (error) {
+      // Silently handle errors to avoid spamming the console
+      // The error might be due to no relay connection or no SS58 address
+    }
+  }, 10000) // Check every 10 seconds
+}
+
+// Clean up session resources
+const cleanupSession = async () => {
   try {
-    await checkForIncomingPermissionRequests()
+    // Clear permission request polling
+    if (permissionRequestInterval) {
+      clearInterval(permissionRequestInterval)
+      permissionRequestInterval = null
+    }
+
+    // Close chat stream
+    if (sessionState.chatStream) {
+      try {
+        await sessionState.chatStream.close()
+      } catch (error) {
+        // Stream might already be closed
+      }
+      sessionState.chatStream = null
+    }
+
+    // Stop the LibP2P node
+    if (node) {
+      try {
+        await node.stop()
+      } catch (error) {
+        appendOutput(`Error stopping node: ${error.message}`)
+      }
+      node = null
+    }
+
+    // Reset session state
+    sessionState.reset()
+    sessionId = null
+
+    appendOutput('Session cleaned up successfully')
   } catch (error) {
-    // Silently handle errors to avoid spamming the console
-    // The error might be due to no relay connection or no SS58 address
+    appendOutput(`Error during session cleanup: ${error.message}`)
   }
-}, 10000) // Check every 10 seconds
+}
 
 // UI Update Functions
 const updateConnList = () => {
+  if (!node) return
+
   const connectionElements = node.getConnections().map((connection) => {
     if (WebRTC.matches(connection.remoteAddr)) {
-      peerMultiaddr = connection.remoteAddr
+      sessionState.peerMultiaddr = connection.remoteAddr
       sendSection.style.display = 'block'
     }
     const element = document.createElement('li')
@@ -580,6 +743,8 @@ const updateConnList = () => {
 }
 
 const updateMultiaddrs = () => {
+  if (!node) return
+
   const webrtcMultiaddrs = node.getMultiaddrs()
     .filter(multiaddr => isWebrtc(multiaddr))
     .map((multiaddr) => {
@@ -590,76 +755,20 @@ const updateMultiaddrs = () => {
   document.getElementById('multiaddrs').replaceChildren(...webrtcMultiaddrs)
 }
 
-// Event Listeners
-node.addEventListener('connection:open', async (event) => {
-  const remoteAddr = event.detail.remoteAddr.toString()
-  const logMessage = `Peer connected: ${remoteAddr}`
-  appendOutput(logMessage)
-  updateConnList()
-})
-node.addEventListener('connection:close', async (event) => {
-  const remoteAddr = event.detail.remoteAddr.toString()
-  const logMessage = `Peer disconnected: ${remoteAddr}`
-  appendOutput(logMessage)
-  updateConnList()
-})
-node.addEventListener('self:peer:update', updateMultiaddrs)
-
-// Chat Protocol Handler
-node.handle(CHAT_PROTOCOL, async ({ stream }) => {
-  chatStream = byteStream(stream)
-  while (true) {
-    const buffer = await chatStream.read()
-    if (buffer === null) {
-      break // End of stream
-    }
-    appendOutput(`Received: '${toString(buffer.subarray())}'`)
-  }
-})
-
-// Connection Challenge Protocol Handler
-node.handle(CONNECTION_CHALLENGE_PROTOCOL, async ({ stream, connection }) => {
-  const streamReader = byteStream(stream)
-  const streamWriter = byteStream(stream)
-
-  try {
-    while (true) {
-      const data = await streamReader.read()
-      if (data === null) {
-        break // End of stream
-      }
-
-      const message = toString(data.subarray())
-      let response
-
-      try {
-        const request = JSON.parse(message)
-        response = await handleConnectionChallengeRequest(request, connection)
-      } catch (error) {
-        appendOutput(`Connection challenge error: ${error.message}`)
-        response = { success: false, error: error.message }
-      }
-
-      await streamWriter.write(fromString(JSON.stringify(response)))
-    }
-  } catch (error) {
-    appendOutput(`Connection challenge stream error: ${error.message}`)
-  }
-})
 
 // Chat Stream Management
 const handleChatStream = async () => {
-  if (chatStream == null) {
+  if (sessionState.chatStream == null) {
     appendOutput('Opening chat stream')
     const signal = AbortSignal.timeout(CHAT_STREAM_TIMEOUT)
     try {
-      const stream = await node.dialProtocol(peerMultiaddr, CHAT_PROTOCOL, { signal })
-      chatStream = byteStream(stream)
+      const stream = await node.dialProtocol(sessionState.peerMultiaddr, CHAT_PROTOCOL, { signal })
+      sessionState.chatStream = byteStream(stream)
 
       // Handle incoming messages
       Promise.resolve().then(async () => {
         while (true) {
-          const buffer = await chatStream.read()
+          const buffer = await sessionState.chatStream.read()
           if (buffer === null) {
             break // End of stream
           }
@@ -681,7 +790,7 @@ const handleChatStream = async () => {
 const sendMessage = async (message) => {
   appendOutput(`Sending: '${message}'`)
   try {
-    await chatStream.write(fromString(message))
+    await sessionState.chatStream.write(fromString(message))
   } catch (error) {
     appendOutput(`Send error: ${error.message}`)
   }
@@ -697,8 +806,8 @@ window.send.onclick = async () => {
 }
 
 // Proof of Possession Functions
-const requestChallenge = async (ss58Address) => {
-  const relayConnection = getRelayConnection()
+const requestChallenge = async (ss58Address, node) => {
+  const relayConnection = getRelayConnection(node)
   if (!relayConnection) {
     throw new Error('No relay connection found')
   }
@@ -737,8 +846,8 @@ const requestChallenge = async (ss58Address) => {
   }
 }
 
-const submitProof = async (ss58Address, challenge, signature, webrtcMultiaddr) => {
-  const relayConnection = getRelayConnection()
+const submitProof = async (ss58Address, challenge, signature, webrtcMultiaddr, node) => {
+  const relayConnection = getRelayConnection(node)
   if (!relayConnection) {
     throw new Error('No relay connection found')
   }
@@ -784,29 +893,29 @@ const submitProof = async (ss58Address, challenge, signature, webrtcMultiaddr) =
 }
 
 // Address Storage Functions
-const getWebrtcMultiaddr = () => {
+const getWebrtcMultiaddr = (node) => {
   const multiaddrs = node.getMultiaddrs()
   return multiaddrs.find(multiaddr => WebRTC.matches(multiaddr))
 }
 
-const storeAddressInRelay = async (polkadotAddress, webrtcMultiaddr, secretKey) => {
+const storeAddressInRelay = async (polkadotAddress, webrtcMultiaddr, secretKey, node, sessionState) => {
   if (!secretKey) {
     throw new Error('Secret key is required for proof of possession')
   }
 
   try {
     // Step 1: Request challenge from relay
-    const challenge = await requestChallenge(polkadotAddress)
+    const challenge = await requestChallenge(polkadotAddress, node)
 
     // Step 2: Sign the challenge with the secret key
     appendOutput('Signing challenge...')
     const signature = await signMessage(challenge, secretKey)
 
     // Step 3: Submit proof to relay
-    await submitProof(polkadotAddress, challenge, signature, webrtcMultiaddr)
+    await submitProof(polkadotAddress, challenge, signature, webrtcMultiaddr, node)
 
-    mySS58Address = polkadotAddress
-    mySecretKey = secretKey
+    sessionState.mySS58Address = polkadotAddress
+    sessionState.mySecretKey = secretKey
     appendOutput('Address registered with proof of possession!')
   } catch (error) {
     throw new Error(`Proof of possession failed: ${error.message}`)
@@ -840,22 +949,22 @@ window['store-address-input'].onclick = async () => {
     }
     appendOutput(`Valid secret key: ${secretKey.substring(0, 10)}...`)
 
-    const webrtcMultiaddr = getWebrtcMultiaddr()
+    const webrtcMultiaddr = getWebrtcMultiaddr(node)
     if (!webrtcMultiaddr) {
       const availableMultiaddrs = node.getMultiaddrs().map(ma => ma.toString()).join(', ')
       appendOutput(`No WebRTC address found. Available: ${availableMultiaddrs}`)
       return
     }
 
-    await storeAddressInRelay(polkadotAddress, webrtcMultiaddr, secretKey)
+    await storeAddressInRelay(polkadotAddress, webrtcMultiaddr, secretKey, node, sessionState)
   } catch (error) {
     appendOutput(`Error: ${error.message}`)
   }
 }
 
 // Address Lookup Functions
-const queryRelayForAddress = async (polkadotAddress) => {
-  const relayConnection = getRelayConnection()
+const queryRelayForAddress = async (polkadotAddress, node) => {
+  const relayConnection = getRelayConnection(node)
   if (!relayConnection) {
     throw new Error('No relay connection found')
   }
@@ -894,7 +1003,7 @@ const queryRelayForAddress = async (polkadotAddress) => {
   }
 }
 
-const connectToPeer = async (peerMultiaddrString) => {
+const connectToPeer = async (peerMultiaddrString, node, sessionState) => {
   appendOutput('Connecting to peer...')
   try {
     const dialSignal = AbortSignal.timeout(CONNECTION_TIMEOUT)
@@ -903,7 +1012,7 @@ const connectToPeer = async (peerMultiaddrString) => {
     appendOutput('Connected to peer!')
 
     // Perform connection proof of possession
-    await performConnectionProofOfPossession(peerMultiaddr)
+    await performConnectionProofOfPossession(peerMultiaddr, node, sessionState)
   } catch (error) {
     if (error.name === 'AbortError') {
       throw new Error('Connection timeout')
@@ -913,14 +1022,14 @@ const connectToPeer = async (peerMultiaddrString) => {
   }
 }
 
-const connectToPeerWithPermission = async (targetSS58Address) => {
-  if (!mySS58Address) {
+const connectToPeerWithPermission = async (targetSS58Address, node, sessionState) => {
+  if (!sessionState.mySS58Address) {
     throw new Error('No SS58 address available for permission request')
   }
 
   try {
     // Step 1: Request permission
-    const requestId = await requestConnectionPermission(targetSS58Address)
+    const requestId = await requestConnectionPermission(targetSS58Address, node, sessionState)
     appendOutput(`Waiting for permission from ${targetSS58Address}...`)
 
     // Step 2: Poll for permission status
@@ -932,7 +1041,7 @@ const connectToPeerWithPermission = async (targetSS58Address) => {
       await new Promise(resolve => setTimeout(resolve, 5000)) // Wait 5 seconds
 
       try {
-        const status = await checkPermissionRequestStatus(requestId)
+        const status = await checkPermissionRequestStatus(requestId, node)
         if (status.accepted) {
           permissionGranted = true
           appendOutput(`Permission granted! Proceeding with connection...`)
@@ -955,14 +1064,14 @@ const connectToPeerWithPermission = async (targetSS58Address) => {
     }
 
     // Step 3: Get the target peer's multiaddr and connect
-    const peerMultiaddrString = await queryRelayForAddress(targetSS58Address)
+    const peerMultiaddrString = await queryRelayForAddress(targetSS58Address, node)
     appendOutput(`Found peer address: ${peerMultiaddrString}`)
 
     // Step 4: Connect to the peer
-    await connectToPeer(peerMultiaddrString)
+    await connectToPeer(peerMultiaddrString, node, sessionState)
 
     // Clean up the outgoing request
-    outgoingPermissionRequests.delete(requestId)
+    sessionState.outgoingPermissionRequests.delete(requestId)
 
   } catch (error) {
     appendOutput(`Permission-based connection failed: ${error.message}`)
@@ -971,8 +1080,8 @@ const connectToPeerWithPermission = async (targetSS58Address) => {
 }
 
 // Perform connection proof of possession
-const performConnectionProofOfPossession = async (peerMultiaddr) => {
-  if (!mySS58Address || !mySecretKey) {
+const performConnectionProofOfPossession = async (peerMultiaddr, node, sessionState) => {
+  if (!sessionState.mySS58Address || !sessionState.mySecretKey) {
     throw new Error('No SS58 address or secret key available for connection proof of possession')
   }
 
@@ -1005,10 +1114,10 @@ const performConnectionProofOfPossession = async (peerMultiaddr) => {
     appendOutput(`Received challenge: ${challenge}`)
 
     // Step 3: Sign the challenge and respond
-    const signature = await signMessage(challenge, mySecretKey)
+    const signature = await signMessage(challenge, sessionState.mySecretKey)
     const respondRequest = {
       action: 'respond',
-      ss58Address: mySS58Address,
+      ss58Address: sessionState.mySS58Address,
       challenge,
       signature: signatureToHex(signature)
     }
@@ -1045,10 +1154,10 @@ const performConnectionProofOfPossession = async (peerMultiaddr) => {
     appendOutput(`Received mutual challenge: ${mutualChallenge}`)
 
     // Step 5: Sign the mutual challenge and verify
-    const mutualSignature = await signMessage(mutualChallenge, mySecretKey)
+    const mutualSignature = await signMessage(mutualChallenge, sessionState.mySecretKey)
     const verifyRequest = {
       action: 'verify',
-      ss58Address: mySS58Address,
+      ss58Address: sessionState.mySS58Address,
       challenge: mutualChallenge,
       signature: signatureToHex(mutualSignature)
     }
@@ -1085,9 +1194,35 @@ window['connect-via-address'].onclick = async () => {
 
   try {
     appendOutput(`Requesting connection to: ${polkadotAddress}`)
-    await connectToPeerWithPermission(polkadotAddress)
+    await connectToPeerWithPermission(polkadotAddress, node, sessionState)
   } catch (error) {
     appendOutput(`Error: ${error.message}`)
+  }
+}
+
+// Initialize the session when the page loads
+document.addEventListener('DOMContentLoaded', async () => {
+  try {
+    await initializeSession()
+  } catch (error) {
+    appendOutput(`Failed to initialize session: ${error.message}`)
+  }
+})
+
+// Clean up session when the page is unloaded
+window.addEventListener('beforeunload', async () => {
+  await cleanupSession()
+})
+
+// Add a function to restart the session (useful for debugging)
+window.restartSession = async () => {
+  try {
+    appendOutput('Restarting session...')
+    await cleanupSession()
+    await initializeSession()
+    appendOutput('Session restarted successfully')
+  } catch (error) {
+    appendOutput(`Failed to restart session: ${error.message}`)
   }
 }
 

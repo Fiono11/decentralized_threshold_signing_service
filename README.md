@@ -204,7 +204,7 @@ docker compose up -d
    - Click "Store SS58 Address with Proof of Possession"
    - Verify you see: "Address registered with proof of possession!"
 
-2. **Open a second browser window/tab (or incognito window):**
+2. **Open a second browser window/tab:**
    - Navigate to `http://localhost:5174`
    - Wait for the "Connected to relay" message
    - In the "SS58 Address" input field, enter an SS58 address. For example: `5Gma8SNsn6rkQf9reAWFQ9WKq8bwwHtSzwMYtLTdhYsGPKiy`
