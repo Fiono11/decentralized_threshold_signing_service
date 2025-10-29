@@ -6,16 +6,19 @@ This project implements a decentralized threshold signing service leveraging the
 
 Each participant in the threshold signing group runs a browser-based application that performs decentralized key generation and signing operations through the Olaf threshold signature protocol, compiled to WebAssembly (WASM). The networking layer is built using JavaScript and `libp2p` for peer discovery and communication.
 
+The service implements proof of possession mechanisms to ensure that only the legitimate owner of a Substrate/Kusama/Polkadot address can register it with the relay server and establish connections with other peers. This prevents address spoofing and ensures secure peer-to-peer communication.
+
 ### 🌐 Networking Layer (JavaScript)
 
 **Transport**: Peers connect to a relay server using WebSockets.
 
 **Discovery**: 
-- When a peer connects, it sends its Substrate/Polkadot/Kusama address to the relay server
-- The relay server assigns the peer a random `libp2p` Peer ID and stores the mapping: Address → Peer ID
+- When a peer connects, it must prove ownership of its Substrate/Polkadot/Kusama address through a cryptographic challenge-response protocol
+- The peer requests a challenge from the relay server, signs it with their private key, and submits the proof
+- The relay server verifies the signature using the address's public key and stores the mapping: Address → Peer ID
 - Peers can query the relay server with a known blockchain address to obtain the corresponding Peer ID
 
-**Direct Peer Communication**: Once a Peer ID is obtained, the peer establishes a WebRTC connection using `libp2p`. All protocol messages are exchanged via this secure, direct P2P channel.
+**Direct Peer Communication**: Once a Peer ID is obtained, the peer establishes a WebRTC connection using `libp2p`. Before communication begins, both peers perform mutual proof of possession to verify each other's identity. All protocol messages are exchanged via this secure, direct P2P channel.
 
 ### 🔐 Cryptographic Protocol (Rust → WASM)
 
@@ -27,6 +30,40 @@ The cryptographic logic is written in Rust and compiled to WebAssembly (WASM) fo
 
 **State Management**: Key shares and protocol state are stored in browser-local storage (e.g., `IndexedDB`).
 
+### 🔒 Security Features
+
+The service implements proof of possession mechanisms to ensure secure peer-to-peer communication and prevent address spoofing attacks.
+
+#### Address Registration Proof of Possession
+
+When a peer registers their SS58 address with the relay server:
+
+1. **Challenge Generation**: The peer requests a cryptographic challenge from the relay server
+2. **Challenge Signing**: The peer signs the challenge using their private key corresponding to the SS58 address
+3. **Signature Verification**: The relay server verifies the signature using the address's public key
+4. **Registration**: Only upon successful verification is the address registered and mapped to a Peer ID
+
+This ensures that only the legitimate owner of a Substrate/Kusama/Polkadot address can register it with the relay server.
+
+#### Connection Proof of Possession
+
+When two peers establish a direct connection:
+
+1. **Initiator Challenge**: The connecting peer requests a challenge from the target peer
+2. **Initiator Response**: The connecting peer signs the challenge and sends their response
+3. **Mutual Challenge**: The target peer generates their own challenge for the initiator
+4. **Mutual Verification**: Both peers verify each other's signatures
+5. **Connection Established**: Only after mutual verification is the connection considered secure
+
+This mutual verification process ensures that both parties can confirm each other's identity before any sensitive protocol messages are exchanged.
+
+#### Cryptographic Implementation
+
+- **Signature Algorithm**: Uses SR25519 (Schnorr signatures over Ristretto25519) for compatibility with Substrate/Kusama/Polkadot
+- **Challenge Format**: Random 32-byte challenges generated using cryptographically secure random number generation
+- **Signature Verification**: Leverages the `@polkadot/util-crypto` library for signature verification
+- **Expiration**: Challenges expire after 5 minutes to prevent replay attacks
+
 ## Development Status
 
 ### ✅ Milestone 1: Peer Discovery via Blockchain Address (COMPLETED)
@@ -35,11 +72,13 @@ This milestone establishes the foundational networking layer where two browsers 
 
 #### Completed Features:
 - ✅ LibP2P relay server with WebSocket transport
-- ✅ Peer discovery system using SS58 addresses  
-- ✅ Address → Peer ID mapping and storage in relay server
+- ✅ Peer discovery system using SS58 addresses with proof of possession
+- ✅ Cryptographic challenge-response protocol for address registration
+- ✅ Address → Peer ID mapping and storage in relay server with verification
 - ✅ Browser-based LibP2P client with WebRTC transport
 - ✅ Direct peer communication via WebRTC using libp2p
-- ✅ Peer-to-peer message exchange protocol
+- ✅ Mutual proof of possession for peer-to-peer connections
+- ✅ Peer-to-peer message exchange protocol with identity verification
 - ✅ Docker containerization for relay server and client
 - ✅ Comprehensive automated tests using Playwright
 - ✅ Inline documentation and testing guide
@@ -161,30 +200,38 @@ docker compose up -d
    - Navigate to `http://localhost:5173`
    - Wait for the "Connected to relay" message
 
-2. **Store your SS58 address:**
+2. **Store your SS58 address with proof of possession:**
    - In the "SS58 Address" input field, enter an SS58 address. For example: `5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY`
-   - Click "Store SS58 Address in Relay"
-   - Verify you see: "Address stored successfully"
+   - In the "Secret Key" input field, enter the corresponding 32-byte secret key in hex format. For example: `0x473a77675b8e77d90c1b6dc2dbe6ac533b0853790ea8bcadf0ee8b5da4cfbbce`
+   - Click "Store SS58 Address with Proof of Possession"
+   - Verify you see: "Address registered with proof of possession!"
 
 3. **Open a second browser window/tab (or incognito window):**
    - Navigate to `http://localhost:5174`
    - Wait for the "Connected to relay" message
+   - Store a different SS58 address with its corresponding secret key (this will be used for the connection proof of possession)
 
 4. **Connect to the first peer:**
    - In the "SS58 Address" input field, enter: `5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY`
    - Click "Find Peer & Connect"
    - Wait for "Connected to peer!" message
+   - Verify you see proof of possession messages: "Initiating connection proof of possession...", "Received challenge:", "Our signature verified!", "Received mutual challenge:", "Mutual connection proof of possession completed!"
 
-5. **Verify the connection:**
+5. **Accept the connection (in the first browser):**
+   - In the first browser window, you should see a connection permission request
+   - Click "Accept" to allow the connection
+   - Verify you see proof of possession messages: "Generated connection challenge for peer:", "Connection challenge verified for peer:", "Generated mutual challenge for peer:", "Mutual connection challenge verified - connection established!"
+
+6. **Verify the connection:**
    - Both browser windows should show the peer connection in "Active Connections"
    - The "Message" section should now be visible in both windows
 
-6. **Send a message from the first browser:**
+7. **Send a message from the first browser:**
    - In the first browser window, type a message in the "Message" field
    - Click "Send"
    - Verify the message is received in the second browser window
 
-7. **Send a message from the second browser:**
+8. **Send a message from the second browser:**
    - In the second browser window, type a different message
    - Click "Send"
    - Verify the message is received in first browser window
