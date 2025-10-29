@@ -199,42 +199,47 @@ docker compose up -d
 1. **Open the first browser window/tab:**
    - Navigate to `http://localhost:5173`
    - Wait for the "Connected to relay" message
-
-2. **Store your SS58 address with proof of possession:**
-   - In the "SS58 Address" input field, enter an SS58 address. For example: `5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY`
+   - In the "SS58 Address" input field, enter an SS58 address. For example: `5CXkZyy4S5b3w16wvKA2hUwzp5q2y7UtRPkXnW97QGvDN8Jw`
    - In the "Secret Key" input field, enter the corresponding 32-byte secret key in hex format. For example: `0x473a77675b8e77d90c1b6dc2dbe6ac533b0853790ea8bcadf0ee8b5da4cfbbce`
    - Click "Store SS58 Address with Proof of Possession"
    - Verify you see: "Address registered with proof of possession!"
 
-3. **Open a second browser window/tab (or incognito window):**
+2. **Open a second browser window/tab (or incognito window):**
    - Navigate to `http://localhost:5174`
    - Wait for the "Connected to relay" message
-   - Store a different SS58 address with its corresponding secret key (this will be used for the connection proof of possession)
+   - In the "SS58 Address" input field, enter an SS58 address. For example: `5Gma8SNsn6rkQf9reAWFQ9WKq8bwwHtSzwMYtLTdhYsGPKiy`
+   - In the "Secret Key" input field, enter the corresponding 32-byte secret key in hex format. For example: `0xdb9ddbb3d6671c4de8248a4fba95f3d873dc21a0434b52951bb33730c1ac93d7`
+   - Click "Store SS58 Address with Proof of Possession"
+   - Verify you see: "Address registered with proof of possession!"
 
-4. **Connect to the first peer:**
-   - In the "SS58 Address" input field, enter: `5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY`
+3. **Connect to the first peer (in the second browser):**
+   - In the "SS58 Address" input field, enter: `5CXkZyy4S5b3w16wvKA2hUwzp5q2y7UtRPkXnW97QGvDN8Jw`
    - Click "Find Peer & Connect"
-   - Wait for "Connected to peer!" message
-   - Verify you see proof of possession messages: "Initiating connection proof of possession...", "Received challenge:", "Our signature verified!", "Received mutual challenge:", "Mutual connection proof of possession completed!"
+   - Wait for the other peer to accept the connection
 
-5. **Accept the connection (in the first browser):**
+4. **Accept the connection (in the first browser):**
    - In the first browser window, you should see a connection permission request
    - Click "Accept" to allow the connection
-   - Verify you see proof of possession messages: "Generated connection challenge for peer:", "Connection challenge verified for peer:", "Generated mutual challenge for peer:", "Mutual connection challenge verified - connection established!"
 
-6. **Verify the connection:**
+5. **Autenticate the connection:**
+   - Verify you see the message "Mutual connection proof of possession completed!" or "Mutual connection challenge verified - connection established!"
    - Both browser windows should show the peer connection in "Active Connections"
    - The "Message" section should now be visible in both windows
 
-7. **Send a message from the first browser:**
+6. **Send a message from the first browser:**
    - In the first browser window, type a message in the "Message" field
    - Click "Send"
    - Verify the message is received in the second browser window
 
-8. **Send a message from the second browser:**
+7. **Send a message from the second browser:**
    - In the second browser window, type a different message
    - Click "Send"
    - Verify the message is received in first browser window
+
+8. **Shutdown the relay server:**
+   - `Ctrl+C` in the relay server terminal (non Docker) or `docker compo
+se stop relay-server` 
+   - Verify that both peers are still able to exchange messages
 
 ### Cleanup
 
