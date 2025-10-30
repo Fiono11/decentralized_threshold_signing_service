@@ -237,8 +237,7 @@ docker compose up -d
    - Verify the message is received in first browser window
 
 8. **Shutdown the relay server:**
-   - `Ctrl+C` in the relay server terminal (non Docker) or `docker compo
-se stop relay-server` 
+   - `Ctrl+C` in the relay server terminal (non Docker) or `docker compose stop relay-server` 
    - Verify that both peers are still able to exchange messages
 
 ### Cleanup
