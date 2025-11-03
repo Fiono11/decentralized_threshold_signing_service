@@ -37,6 +37,11 @@ const sendSection = document.getElementById('send-section')
 // WASM Threshold Signing State
 let generatedAllMessage = null
 let receivedAllMessage = null
+let round1Nonces = null
+let round1Commitments = null
+let receivedRound1Commitments = [] // Array to store commitments from other participants
+let round2SigningPackage = null
+let receivedSigningPackages = [] // Array to store signing packages from other participants
 
 // Session State Class
 class SessionState {
@@ -646,7 +651,7 @@ const setupProtocolHandlers = () => {
         break // End of stream
       }
       const message = toString(buffer.subarray())
-      appendOutput(`Received: '${message}'`)
+      appendOutput(`Received: '${message.substring(0, 50)}${message.length > 50 ? '...' : ''}'`)
 
       // Check if this is an AllMessage
       if (message.startsWith('ALL_MESSAGE:')) {
@@ -656,6 +661,32 @@ const setupProtocolHandlers = () => {
           appendOutput(`✓ AllMessage received and stored: ${receivedAllMessage.length} bytes`)
         } catch (err) {
           appendOutput(`Error parsing received AllMessage: ${err.message}`)
+        }
+      }
+      // Check if this is Round 1 commitments
+      else if (message.startsWith('ROUND1_COMMITMENTS:')) {
+        const hexCommitments = message.substring('ROUND1_COMMITMENTS:'.length)
+        try {
+          const commitmentsBytes = hexToUint8Array('0x' + hexCommitments)
+          const commitmentsArray = Array.from(commitmentsBytes)
+          receivedRound1Commitments.push(commitmentsArray)
+          appendOutput(`✓ Round 1 commitments received and stored: ${commitmentsArray.length} bytes`)
+          appendOutput(`✓ Total received commitments: ${receivedRound1Commitments.length}`)
+        } catch (err) {
+          appendOutput(`Error parsing received commitments: ${err.message}`)
+        }
+      }
+      // Check if this is a signing package
+      else if (message.startsWith('SIGNING_PACKAGE:')) {
+        const hexPackage = message.substring('SIGNING_PACKAGE:'.length)
+        try {
+          const packageBytes = hexToUint8Array('0x' + hexPackage)
+          const packageArray = Array.from(packageBytes)
+          receivedSigningPackages.push(packageArray)
+          appendOutput(`✓ Signing package received and stored: ${packageArray.length} bytes`)
+          appendOutput(`✓ Total received signing packages: ${receivedSigningPackages.length}`)
+        } catch (err) {
+          appendOutput(`Error parsing received signing package: ${err.message}`)
         }
       }
     }
@@ -790,7 +821,7 @@ const handleChatStream = async () => {
             break // End of stream
           }
           const message = toString(buffer.subarray())
-          appendOutput(`Received: '${message}'`)
+          appendOutput(`Received: '${message.substring(0, 50)}${message.length > 50 ? '...' : ''}'`)
 
           // Check if this is an AllMessage
           if (message.startsWith('ALL_MESSAGE:')) {
@@ -800,6 +831,32 @@ const handleChatStream = async () => {
               appendOutput(`✓ AllMessage received and stored: ${receivedAllMessage.length} bytes`)
             } catch (err) {
               appendOutput(`Error parsing received AllMessage: ${err.message}`)
+            }
+          }
+          // Check if this is Round 1 commitments
+          else if (message.startsWith('ROUND1_COMMITMENTS:')) {
+            const hexCommitments = message.substring('ROUND1_COMMITMENTS:'.length)
+            try {
+              const commitmentsBytes = hexToU8a('0x' + hexCommitments)
+              const commitmentsArray = Array.from(commitmentsBytes)
+              receivedRound1Commitments.push(commitmentsArray)
+              appendOutput(`✓ Round 1 commitments received and stored: ${commitmentsArray.length} bytes`)
+              appendOutput(`✓ Total received commitments: ${receivedRound1Commitments.length}`)
+            } catch (err) {
+              appendOutput(`Error parsing received commitments: ${err.message}`)
+            }
+          }
+          // Check if this is a signing package
+          else if (message.startsWith('SIGNING_PACKAGE:')) {
+            const hexPackage = message.substring('SIGNING_PACKAGE:'.length)
+            try {
+              const packageBytes = hexToU8a('0x' + hexPackage)
+              const packageArray = Array.from(packageBytes)
+              receivedSigningPackages.push(packageArray)
+              appendOutput(`✓ Signing package received and stored: ${packageArray.length} bytes`)
+              appendOutput(`✓ Total received signing packages: ${receivedSigningPackages.length}`)
+            } catch (err) {
+              appendOutput(`Error parsing received signing package: ${err.message}`)
             }
           }
         }
@@ -1551,9 +1608,331 @@ window['process-all-messages'].onclick = async () => {
     appendOutput('✓ Threshold key processing completed successfully!')
     appendOutput('The threshold public key, SPP output message, and signing keypair are now available for use in threshold signing operations.')
 
+    // Show Round 1 signing button
+    const round1Actions = document.getElementById('round1-signing-actions')
+    if (round1Actions) {
+      round1Actions.style.display = 'block'
+    }
+
   } catch (err) {
     appendOutput(`Error processing AllMessages: ${err.message}`)
     console.error('Process AllMessages error:', err)
+  }
+}
+
+// Round 1 Signing Handler
+window['run-round1-signing'].onclick = async () => {
+  try {
+    if (!window.generatedSigningKeypair) {
+      appendOutput('No signing keypair available. Please process AllMessages first.')
+      return
+    }
+
+    appendOutput('Running Round 1 signing...')
+    const result = wasm_threshold_sign_round1(window.generatedSigningKeypair)
+
+    // Parse JSON strings
+    round1Nonces = JSON.parse(result.signing_nonces)
+    round1Commitments = JSON.parse(result.signing_commitments)
+
+    appendOutput(`✓ Round 1 signing completed`)
+    appendOutput(`✓ Nonces: ${round1Nonces.length} bytes`)
+    appendOutput(`✓ Commitments: ${round1Commitments.length} bytes`)
+
+    // Display Round 1 results
+    const round1Output = document.getElementById('round1-output')
+    if (round1Output) {
+      const noncesHex = round1Nonces.map(b => b.toString(16).padStart(2, '0')).join('')
+      const commitmentsHex = round1Commitments.map(b => b.toString(16).padStart(2, '0')).join('')
+      round1Output.innerHTML = `
+        <p><strong>Nonces (${round1Nonces.length} bytes):</strong> ${noncesHex.substring(0, 64)}...</p>
+        <p><strong>Commitments (${round1Commitments.length} bytes):</strong> ${commitmentsHex.substring(0, 64)}...</p>
+      `
+    }
+
+    // Show send commitments button and Round 2 button
+    const sendCommitmentsButton = document.getElementById('send-round1-commitments')
+    if (sendCommitmentsButton) {
+      sendCommitmentsButton.style.display = 'block'
+    }
+
+    const round2Actions = document.getElementById('round2-signing-actions')
+    if (round2Actions) {
+      round2Actions.style.display = 'block'
+    }
+
+  } catch (err) {
+    appendOutput(`Error in Round 1 signing: ${err.message}`)
+    console.error('Round 1 signing error:', err)
+  }
+}
+
+// Send Round 1 Commitments Handler
+window['send-round1-commitments'].onclick = async () => {
+  try {
+    if (!round1Commitments) {
+      appendOutput('No commitments available. Please run Round 1 signing first.')
+      return
+    }
+
+    if (!sessionState.peerMultiaddr) {
+      appendOutput('No peer connected. Please connect to a peer first.')
+      return
+    }
+
+    appendOutput('Sending Round 1 commitments to connected peer...')
+    appendOutput(`Commitments size: ${round1Commitments.length} bytes`)
+
+    // Convert commitments to hex string
+    const commitmentsHex = round1Commitments.map(b => b.toString(16).padStart(2, '0')).join('')
+    const messageToSend = `ROUND1_COMMITMENTS:${commitmentsHex}`
+
+    // Ensure we have a chat stream
+    const streamReady = await handleChatStream()
+    if (!streamReady) {
+      return
+    }
+
+    // Send the commitments
+    await sendMessage(messageToSend)
+    appendOutput('✓ Round 1 commitments sent successfully to connected peer')
+
+  } catch (err) {
+    appendOutput(`Error sending commitments: ${err.message}`)
+    console.error('Send commitments error:', err)
+  }
+}
+
+// Round 2 Signing Handler
+window['run-round2-signing'].onclick = async () => {
+  try {
+    if (!window.generatedSigningKeypair) {
+      appendOutput('No signing keypair available. Please process AllMessages first.')
+      return
+    }
+
+    if (!round1Nonces || !round1Commitments) {
+      appendOutput('Round 1 signing not completed. Please run Round 1 signing first.')
+      return
+    }
+
+    // Get payload and context from inputs
+    const payloadInput = document.getElementById('round2-payload-input')
+    const contextInput = document.getElementById('round2-context-input')
+    const payloadText = payloadInput ? payloadInput.value : 'test payload to sign with threshold signature'
+    const contextText = contextInput ? contextInput.value : 'test context for threshold signing'
+
+    // Check if we have received commitments from other participants
+    // IMPORTANT: All participants must use the same commitment order
+    // We'll collect all commitments (ours + received) and sort them by their byte representation
+    // to ensure consistent ordering across all participants
+    const allCommitments = [round1Commitments]
+    if (receivedRound1Commitments.length > 0) {
+      allCommitments.push(...receivedRound1Commitments)
+      appendOutput(`Total commitments before sorting: ${allCommitments.length} (${receivedRound1Commitments.length} received from peers)`)
+    } else {
+      appendOutput('Warning: No commitments received from other participants. You need at least threshold participants.')
+    }
+
+    // Sort commitments by their byte representation to ensure consistent ordering
+    // This ensures all participants use the same commitment order, which is required
+    // for the common data to match during aggregation
+    allCommitments.sort((a, b) => {
+      // Compare byte arrays lexicographically
+      const minLen = Math.min(a.length, b.length)
+      for (let i = 0; i < minLen; i++) {
+        if (a[i] < b[i]) return -1
+        if (a[i] > b[i]) return 1
+      }
+      return a.length - b.length
+    })
+
+    appendOutput(`Using ${allCommitments.length} commitments in sorted order`)
+
+    appendOutput('Running Round 2 signing...')
+    appendOutput(`Payload: ${payloadText}`)
+    appendOutput(`Context: ${contextText}`)
+
+    const payload = new TextEncoder().encode(payloadText)
+
+    // Prepare commitments for WASM (JSON encode)
+    const commitmentsJson = JSON.stringify(allCommitments)
+    const commitmentsBytes = new TextEncoder().encode(commitmentsJson)
+
+    appendOutput(`Commitments JSON length: ${commitmentsJson.length} characters`)
+
+    const result = wasm_threshold_sign_round2(
+      window.generatedSigningKeypair,
+      new Uint8Array(round1Nonces),
+      commitmentsBytes,
+      window.generatedSppOutputMessage,
+      payload,
+      contextText
+    )
+
+    round2SigningPackage = Array.from(result)
+
+    appendOutput(`✓ Round 2 signing completed`)
+    appendOutput(`✓ Signing package: ${round2SigningPackage.length} bytes`)
+
+    // Display Round 2 results
+    const round2Output = document.getElementById('round2-output')
+    if (round2Output) {
+      const packageHex = round2SigningPackage.map(b => b.toString(16).padStart(2, '0')).join('')
+      round2Output.innerHTML = `
+        <p><strong>Signing Package (${round2SigningPackage.length} bytes):</strong> ${packageHex.substring(0, 128)}...</p>
+      `
+    }
+
+    // Show signing package actions
+    const signingPackageActions = document.getElementById('signing-package-actions')
+    if (signingPackageActions) {
+      signingPackageActions.style.display = 'block'
+    }
+
+  } catch (err) {
+    appendOutput(`Error in Round 2 signing: ${err.message}`)
+    console.error('Round 2 signing error:', err)
+  }
+}
+
+// Send Signing Package Handler
+window['send-signing-package'].onclick = async () => {
+  try {
+    if (!round2SigningPackage) {
+      appendOutput('No signing package available. Please run Round 2 signing first.')
+      return
+    }
+
+    if (!sessionState.peerMultiaddr) {
+      appendOutput('No peer connected. Please connect to a peer first.')
+      return
+    }
+
+    appendOutput('Sending signing package to connected peer...')
+    appendOutput(`Signing package size: ${round2SigningPackage.length} bytes`)
+
+    // Convert signing package to hex string
+    const packageHex = round2SigningPackage.map(b => b.toString(16).padStart(2, '0')).join('')
+    const messageToSend = `SIGNING_PACKAGE:${packageHex}`
+
+    // Ensure we have a chat stream
+    const streamReady = await handleChatStream()
+    if (!streamReady) {
+      return
+    }
+
+    // Send the signing package
+    await sendMessage(messageToSend)
+    appendOutput('✓ Signing package sent successfully to connected peer')
+
+  } catch (err) {
+    appendOutput(`Error sending signing package: ${err.message}`)
+    console.error('Send signing package error:', err)
+  }
+}
+
+// Aggregate Signatures Handler
+window['aggregate-signatures'].onclick = async () => {
+  try {
+    if (!round2SigningPackage) {
+      appendOutput('No signing package available. Please run Round 2 signing first.')
+      return
+    }
+
+    // Collect all signing packages
+    const allSigningPackages = [round2SigningPackage]
+    if (receivedSigningPackages.length > 0) {
+      allSigningPackages.push(...receivedSigningPackages)
+      appendOutput(`Aggregating ${allSigningPackages.length} signing packages...`)
+    } else {
+      appendOutput('Warning: No signing packages received from other participants.')
+      appendOutput('You need at least threshold signing packages to aggregate.')
+      return
+    }
+
+    appendOutput('Aggregating threshold signature...')
+    appendOutput(`Our signing package: ${round2SigningPackage.length} bytes`)
+    appendOutput(`Received signing packages: ${receivedSigningPackages.length}`)
+    receivedSigningPackages.forEach((pkg, idx) => {
+      appendOutput(`  Package ${idx + 1}: ${pkg.length} bytes`)
+    })
+
+    // Validate that we have enough signing packages
+    const thresholdInput = document.getElementById('threshold-input')
+    const threshold = thresholdInput ? parseInt(thresholdInput.value) : 2
+    if (allSigningPackages.length < threshold) {
+      appendOutput(`Error: Need at least ${threshold} signing packages for threshold ${threshold}, but only have ${allSigningPackages.length}`)
+      return
+    }
+
+    appendOutput(`Aggregating with ${allSigningPackages.length} packages (threshold: ${threshold})`)
+
+    // Prepare signing packages for WASM (JSON encode)
+    // The format should be an array of byte arrays: [[bytes...], [bytes...]]
+    const signingPackagesJson = JSON.stringify(allSigningPackages)
+    const signingPackagesBytes = new TextEncoder().encode(signingPackagesJson)
+
+    appendOutput(`JSON length: ${signingPackagesJson.length} characters`)
+    appendOutput(`Bytes length: ${signingPackagesBytes.length} bytes`)
+
+    try {
+      // Use the globally exposed WASM function
+      const aggregatedSignature = window.wasm_aggregate_threshold_signature(signingPackagesBytes)
+
+      if (!aggregatedSignature) {
+        throw new Error('WASM function returned null/undefined')
+      }
+
+      if (!(aggregatedSignature instanceof Uint8Array)) {
+        throw new Error(`WASM function returned unexpected type: ${typeof aggregatedSignature}, constructor: ${aggregatedSignature?.constructor?.name}`)
+      }
+
+      const signatureBytes = Array.from(aggregatedSignature)
+
+      appendOutput(`✓ Signature aggregation completed`)
+      appendOutput(`✓ Aggregated signature: ${signatureBytes.length} bytes`)
+
+      const signatureHex = signatureBytes.map(b => b.toString(16).padStart(2, '0')).join('')
+      appendOutput(`✓ Signature (hex): ${signatureHex}`)
+
+      // Display aggregated signature
+      const signingPackageOutput = document.getElementById('signing-package-output')
+      if (signingPackageOutput) {
+        signingPackageOutput.innerHTML = `
+          <p><strong>Aggregated Signature (${signatureBytes.length} bytes):</strong></p>
+          <p style="word-break: break-all;">${signatureHex}</p>
+        `
+      }
+
+      // Store globally
+      window.aggregatedSignature = signatureBytes
+    } catch (wasmErr) {
+      // Handle WASM-specific errors
+      let errorMessage = 'Unknown error'
+      if (wasmErr && typeof wasmErr === 'object') {
+        if (wasmErr.message) {
+          errorMessage = wasmErr.message
+        } else if (wasmErr.toString && wasmErr.toString() !== '[object Object]') {
+          errorMessage = wasmErr.toString()
+        } else {
+          errorMessage = JSON.stringify(wasmErr)
+        }
+      } else if (wasmErr) {
+        errorMessage = String(wasmErr)
+      }
+
+      appendOutput(`Error in WASM aggregation: ${errorMessage}`)
+      console.error('WASM aggregation error details:', wasmErr)
+      console.error('Signing packages being sent:', allSigningPackages.map(p => p.length))
+      throw wasmErr
+    }
+
+  } catch (err) {
+    const errorMessage = err?.message || err?.toString() || String(err) || 'Unknown error'
+    appendOutput(`Error aggregating signatures: ${errorMessage}`)
+    console.error('Aggregate signatures error:', err)
+    console.error('Error stack:', err?.stack)
   }
 }
 

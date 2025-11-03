@@ -254,6 +254,38 @@
             <button type="button" id="store-all-message">Store AllMessage in Relay</button>
             <button type="button" id="process-all-messages">Process AllMessages (Generate Threshold Key)</button>
           </div>
+          <div id="round1-signing-actions" style="margin-top: 10px; display: none;">
+            <h3>Round 1 Signing</h3>
+            <label for="round1-context-input">Context (optional):</label>
+            <input type="text" id="round1-context-input" placeholder="Enter context for signing (default: empty)"
+              value="" />
+            <button type="button" id="run-round1-signing">Run Round 1 Signing</button>
+            <button type="button" id="send-round1-commitments" style="display: none;">Send Commitments to Connected
+              Peer</button>
+            <div id="round1-output" style="margin-top: 10px; font-family: monospace; word-break: break-all;"></div>
+          </div>
+          <div id="round2-signing-actions" style="margin-top: 10px; display: none;">
+            <h3>Round 2 Signing</h3>
+            <p style="color: #d9534f; font-size: 12px; margin-bottom: 10px;">
+              <strong>⚠️ Important:</strong> All participants must use the <strong>exact same payload and
+                context</strong> for aggregation to work!
+            </p>
+            <label for="round2-payload-input">Payload to Sign:</label>
+            <input type="text" id="round2-payload-input" placeholder="Enter message to sign"
+              value="test payload to sign with threshold signature" />
+            <label for="round2-context-input">Context:</label>
+            <input type="text" id="round2-context-input" placeholder="Enter context for signing"
+              value="test context for threshold signing" />
+            <button type="button" id="run-round2-signing">Run Round 2 Signing</button>
+            <div id="round2-output" style="margin-top: 10px; font-family: monospace; word-break: break-all;"></div>
+          </div>
+          <div id="signing-package-actions" style="margin-top: 10px; display: none;">
+            <h3>Signing Package Actions</h3>
+            <button type="button" id="send-signing-package">Send Signing Package to Connected Peer</button>
+            <button type="button" id="aggregate-signatures">Aggregate Signatures</button>
+            <div id="signing-package-output" style="margin-top: 10px; font-family: monospace; word-break: break-all;">
+            </div>
+          </div>
         </form>
       </section>
 
