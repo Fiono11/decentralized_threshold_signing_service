@@ -4,109 +4,290 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description"
+    content="Decentralized Threshold Signing Service - Browser Client for peer-to-peer communication via SS58 addresses" />
+  <meta name="author" content="Decentralized Threshold Signing Service" />
+
   <!-- Decentralized Threshold Signing Service - Browser Client -->
   <title>Decentralized Threshold Signing Service</title>
+
   <style>
-    /* CSS Styles for the UI */
-    label,
+    /* CSS Custom Properties (Variables) */
+    :root {
+      --primary-color: #f0f8ff;
+      --border-color: #ddd;
+      --border-radius: 5px;
+      --spacing-small: 5px;
+      --spacing-medium: 15px;
+      --spacing-large: 20px;
+      --input-width-large: 800px;
+      --input-width-medium: 600px;
+      --font-weight-bold: bold;
+    }
+
+    /* Base Styles */
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+      line-height: 1.6;
+      margin: 0;
+      padding: var(--spacing-large);
+      background-color: #fafafa;
+    }
+
+    /* Typography */
+    h3 {
+      color: #333;
+      margin-top: 0;
+      margin-bottom: var(--spacing-medium);
+    }
+
+    p {
+      color: #666;
+      margin-bottom: var(--spacing-large);
+    }
+
+    /* Form Elements */
+    label {
+      display: block;
+      font-weight: var(--font-weight-bold);
+      margin: var(--spacing-small) 0;
+      color: #333;
+    }
+
     button {
       display: block;
-      font-weight: bold;
-      margin: 5px 0;
+      font-weight: var(--font-weight-bold);
+      margin: var(--spacing-small) 0;
+      padding: 10px 20px;
+      background-color: #007bff;
+      color: white;
+      border: none;
+      border-radius: var(--border-radius);
+      cursor: pointer;
+      transition: background-color 0.2s ease;
     }
 
-    div {
-      margin-bottom: 20px;
+    button:hover {
+      background-color: #0056b3;
     }
 
-    #send-section {
-      display: none;
+    button:active {
+      background-color: #004085;
     }
 
     input[type="text"] {
-      width: 800px;
+      width: var(--input-width-large);
+      padding: 8px 12px;
+      border: 1px solid var(--border-color);
+      border-radius: var(--border-radius);
+      font-size: 14px;
+      transition: border-color 0.2s ease;
     }
 
-    .ss58-section {
-      background-color: #f0f8ff;
-      padding: 15px;
-      border-radius: 5px;
-      border: 1px solid #ddd;
+    input[type="text"]:focus {
+      outline: none;
+      border-color: #007bff;
+      box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.25);
     }
 
-    .ss58-section input {
-      width: 600px;
+    /* Layout */
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+
+    .section {
+      margin-bottom: var(--spacing-large);
+      background-color: white;
+      padding: var(--spacing-large);
+      border-radius: var(--border-radius);
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    }
+
+    .section--hidden {
+      display: none;
+    }
+
+    .section--highlighted {
+      background-color: var(--primary-color);
+      border: 1px solid var(--border-color);
+    }
+
+    .section--highlighted input[type="text"] {
+      width: var(--input-width-medium);
+    }
+
+    /* Lists */
+    ul {
+      list-style-type: none;
+      padding: 0;
+      margin: 0;
+    }
+
+    li {
+      padding: 8px 12px;
+      margin: 4px 0;
+      background-color: #f8f9fa;
+      border-radius: var(--border-radius);
+      font-family: monospace;
+      font-size: 12px;
+      word-break: break-all;
+    }
+
+    /* Output Section */
+    .output {
+      background-color: #f8f9fa;
+      border: 1px solid var(--border-color);
+      border-radius: var(--border-radius);
+      padding: var(--spacing-medium);
+      min-height: 200px;
+      max-height: 400px;
+      overflow-y: auto;
+      font-family: monospace;
+      font-size: 12px;
+      line-height: 1.4;
+    }
+
+    .output div {
+      margin-bottom: 4px;
+      padding: 2px 0;
+    }
+
+    /* Responsive Design */
+    @media (max-width: 768px) {
+      body {
+        padding: var(--spacing-medium);
+      }
+
+      input[type="text"] {
+        width: 100%;
+        max-width: var(--input-width-large);
+      }
+
+      .section--highlighted input[type="text"] {
+        width: 100%;
+        max-width: var(--input-width-medium);
+      }
     }
   </style>
 </head>
 
 <body>
-  <div id="app">
-    <div>
-      <h3>🔗 Auto-Connected to Relay</h3>
-      <p>This application automatically connects to the relay server at startup.</p>
-    </div>
+  <div class="container">
+    <main id="app">
+      <!-- Header Section -->
+      <header class="section">
+        <h1>🔗 Decentralized Threshold Signing Service</h1>
+        <p>This application automatically connects to the relay server at startup and enables peer-to-peer communication
+          via SS58 addresses.</p>
+      </header>
 
-    <div id="send-section">
-      <label for="message">Message:</label>
-      <input type="text" id="message" value="hello" />
-      <button id="send">Send</button>
-    </div>
+      <!-- Messaging Section -->
+      <section id="send-section" class="section section--hidden" aria-label="Peer-to-peer messaging">
+        <h2>💬 Send Message</h2>
+        <form role="form" aria-label="Send message to connected peer">
+          <label for="message">Message:</label>
+          <input type="text" id="message" name="message" value="hello" placeholder="Enter your message here..."
+            aria-describedby="message-help" />
+          <button type="button" id="send" aria-label="Send message to connected peer">
+            Send Message
+          </button>
+        </form>
+      </section>
 
-    <!-- SS58 Address Storage Section -->
-    <div class="ss58-section">
-      <label for="ss58-address-input">SS58 Address:</label>
-      <input type="text" id="ss58-address-input"
-        placeholder="Enter your SS58 address (e.g., 5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY)" />
-      <button id="store-address-input">Store SS58 Address in Relay</button>
-    </div>
+      <!-- SS58 Address Storage Section -->
+      <section class="section section--highlighted" aria-label="Store SS58 address">
+        <h2>📝 Store SS58 Address with Proof of Possession</h2>
+        <form role="form" aria-label="Store your SS58 address in the relay with proof of possession">
+          <label for="ss58-address-input">Your SS58 Address:</label>
+          <input type="text" id="ss58-address-input" name="ss58-address-input"
+            placeholder="Enter your SS58 address (e.g., 5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY)"
+            aria-describedby="ss58-storage-help" />
+          <label for="secret-key-input">Your Secret Key (32 bytes hex):</label>
+          <input type="text" id="secret-key-input" name="secret-key-input"
+            placeholder="Enter your secret key (e.g., 0x473a77675b8e77d90c1b6dc2dbe6ac533b0853790ea8bcadf0ee8b5da4cfbbce)"
+            aria-describedby="secret-key-help" />
+          <button type="button" id="store-address-input"
+            aria-label="Store your SS58 address in the relay with proof of possession">
+            Store SS58 Address with Proof of Possession
+          </button>
+        </form>
+      </section>
 
-    <!-- SS58 Address Lookup and Connection Section -->
-    <div class="ss58-section">
-      <label for="ss58-address">SS58 Address:</label>
-      <input type="text" id="ss58-address" placeholder="Enter SS58 address to find and connect to peer" />
-      <button id="connect-via-address">Find Peer & Connect</button>
-    </div>
+      <!-- SS58 Address Lookup and Connection Section -->
+      <section class="section section--highlighted" aria-label="Connect to peer via SS58 address">
+        <h2>🔍 Find & Connect to Peer</h2>
+        <form role="form" aria-label="Find and connect to a peer using their SS58 address">
+          <label for="ss58-address">Peer's SS58 Address:</label>
+          <input type="text" id="ss58-address" name="ss58-address"
+            placeholder="Enter SS58 address to find and connect to peer" aria-describedby="ss58-connection-help" />
+          <button type="button" id="connect-via-address" aria-label="Find peer and establish connection">
+            Find Peer & Connect
+          </button>
+        </form>
+      </section>
 
-    <!-- WASM Threshold Signing Section -->
-    <div class="ss58-section">
-      <h3>🔐 Threshold Signing (SimplPedPop)</h3>
-      <label for="secret-key-input">Secret Key (hex format):</label>
-      <input type="text" id="secret-key-input"
-        placeholder="Enter secret key in hex format (e.g., 0x473a77675b8e77d90c1b6dc2dbe6ac533b0853790ea8bcadf0ee8b5da4cfbbce)"
-        value="0x473a77675b8e77d90c1b6dc2dbe6ac533b0853790ea8bcadf0ee8b5da4cfbbce" />
+      <!-- WASM Threshold Signing Section -->
+      <section class="section" aria-label="Threshold signing with SimplPedPoP">
+        <h2>🔐 Threshold Signing (SimplPedPoP)</h2>
+        <form role="form" aria-label="Threshold signing configuration">
+          <label for="threshold-secret-key-input">Secret Key (hex format):</label>
+          <input type="text" id="threshold-secret-key-input"
+            placeholder="Enter secret key in hex format (e.g., 0x473a77675b8e77d90c1b6dc2dbe6ac533b0853790ea8bcadf0ee8b5da4cfbbce)"
+            value="0x473a77675b8e77d90c1b6dc2dbe6ac533b0853790ea8bcadf0ee8b5da4cfbbce" />
 
-      <label for="recipients-input">Recipients (comma-separated SS58 addresses):</label>
-      <input type="text" id="recipients-input" placeholder="Enter recipient SS58 addresses separated by commas"
-        value="5CXkZyy4S5b3w16wvKA2hUwzp5q2y7UtRPkXnW97QGvDN8Jw,5Gma8SNsn6rkQf9reAWFQ9WKq8bwwHtSzwMYtLTdhYsGPKiy" />
+          <label for="recipients-input">Recipients (comma-separated SS58 addresses):</label>
+          <input type="text" id="recipients-input" placeholder="Enter recipient SS58 addresses separated by commas"
+            value="5CXkZyy4S5b3w16wvKA2hUwzp5q2y7UtRPkXnW97QGvDN8Jw,5Gma8SNsn6rkQf9reAWFQ9WKq8bwwHtSzwMYtLTdhYsGPKiy" />
 
-      <label for="threshold-input">Threshold:</label>
-      <input type="number" id="threshold-input" value="2" min="1" max="10" />
+          <label for="threshold-input">Threshold:</label>
+          <input type="number" id="threshold-input" value="2" min="1" max="10" />
 
-      <button id="generate-all-message">Generate AllMessage</button>
-      <div id="all-message-output" style="margin-top: 10px; font-family: monospace; word-break: break-all;"></div>
-      <div id="all-message-actions" style="margin-top: 10px; display: none;">
-        <button id="send-all-message">Send AllMessage to Connected Peer</button>
-        <button id="store-all-message">Store AllMessage in Relay</button>
-        <button id="process-all-messages">Process AllMessages (Generate Threshold Key)</button>
-      </div>
-    </div>
+          <button type="button" id="generate-all-message">Generate AllMessage</button>
+          <div id="all-message-output" style="margin-top: 10px; font-family: monospace; word-break: break-all;"></div>
+          <div id="all-message-actions" style="margin-top: 10px; display: none;">
+            <button type="button" id="send-all-message">Send AllMessage to Connected Peer</button>
+            <button type="button" id="store-all-message">Store AllMessage in Relay</button>
+            <button type="button" id="process-all-messages">Process AllMessages (Generate Threshold Key)</button>
+          </div>
+        </form>
+      </section>
 
-    <!-- Active Connections Display -->
-    <div id="connectionsWrapper">
-      <h3>Active Connections:</h3>
-      <ul id="connections"></ul>
-    </div>
+      <!-- Network Status Section -->
+      <section class="section" aria-label="Network status information">
+        <h2>🌐 Network Status</h2>
 
-    <!-- Listening Addresses Display -->
-    <div id="listeningAddressesWrapper">
-      <h3>Listening addresses:</h3>
-      <ul id="multiaddrs"></ul>
-    </div>
+        <!-- Active Connections Display -->
+        <div id="connectionsWrapper">
+          <h3>Active Connections:</h3>
+          <ul id="connections" role="list" aria-label="List of active peer connections"></ul>
+        </div>
 
-    <!-- Application Output/Log Section -->
-    <h3>Output:</h3>
-    <div id="output"></div>
+        <!-- Listening Addresses Display -->
+        <div id="listeningAddressesWrapper">
+          <h3>Listening Addresses:</h3>
+          <ul id="multiaddrs" role="list" aria-label="List of listening addresses"></ul>
+        </div>
+      </section>
+
+      <!-- Permission Requests Section -->
+      <section class="section" aria-label="Connection permission requests">
+        <h2>🔐 Connection Permission Requests</h2>
+        <div id="permission-requests" role="region" aria-label="Pending connection permission requests">
+          <p>Incoming connection requests will appear here. You can accept or reject them.</p>
+        </div>
+      </section>
+
+      <!-- Application Output/Log Section -->
+      <section class="section" aria-label="Application output and logs">
+        <h2>📋 Output Log</h2>
+        <div id="output" class="output" role="log" aria-label="Application output and status messages"></div>
+      </section>
+    </main>
   </div>
 
   <script type="module" src="./index.js"></script>

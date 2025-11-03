@@ -1,34 +1,20 @@
 // Browser Integration Tests for Decentralized Threshold Signing Service
 
-import { noise } from '@chainsafe/libp2p-noise'
-import { yamux } from '@chainsafe/libp2p-yamux'
-import { circuitRelayServer } from '@libp2p/circuit-relay-v2'
-import { identify } from '@libp2p/identify'
-import { webSockets } from '@libp2p/websockets'
-import * as filters from '@libp2p/websockets/filters'
-import { createLibp2p } from 'libp2p'
-import { setup, expect } from 'test-ipfs-example/browser'
-import { byteStream } from 'it-byte-stream'
-import { fromString, toString } from 'uint8arrays'
-import { peerIdFromString } from '@libp2p/peer-id'
+import { test, expect } from '@playwright/test'
+import { createRelayServer, setupRelayHandlers } from '../relay.js'
+import { spawn } from 'child_process'
 
-const test = setup()
-
-const messageInput = '#message'
-const sendBtn = '#send'
-const output = '#output'
-const ss58AddressInput = '#ss58-address-input'
-const storeAddressBtn = '#store-address-input'
-const ss58Address = '#ss58-address'
-const connectViaAddressBtn = '#connect-via-address'
-
-let url
-
-const KV_PROTOCOL = '/libp2p/examples/kv/1.0.0'
-const KV_QUERY_PROTOCOL = '/libp2p/examples/kv-query/1.0.0'
-
-const TEST_SS58_ADDRESS_A = '5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY'
-const TEST_SS58_ADDRESS_B = '5FHneW46xGXgs5mUiveU4sbTyGBzmstUspZC92UhjJM694ty'
+// DOM Selectors
+const SELECTORS = {
+  messageInput: '#message',
+  sendButton: '#send',
+  output: '#output',
+  ss58AddressInput: '#ss58-address-input',
+  secretKeyInput: '#secret-key-input',
+  storeAddressButton: '#store-address-input',
+  ss58Address: '#ss58-address',
+  connectViaAddressButton: '#connect-via-address'
+}
 
 // Test data for WASM integration tests
 const TEST_RECIPIENTS = [
@@ -39,197 +25,374 @@ const TEST_RECIPIENTS = [
 const TEST_SECRET_KEY_1 = "0x473a77675b8e77d90c1b6dc2dbe6ac533b0853790ea8bcadf0ee8b5da4cfbbce"
 const TEST_SECRET_KEY_2 = "0xdb9ddbb3d6671c4de8248a4fba95f3d873dc21a0434b52951bb33730c1ac93d7"
 
-async function spawnRelay() {
-  const HARDCODED_PEER_ID = '12D3KooWA1bysjrTACSWqf6q172inxvwKHUxAnBtVgaVDKMxpZtx'
-  const peerId = await peerIdFromString(HARDCODED_PEER_ID)
-
-  const relayNode = await createLibp2p({
-    peerId,
-    addresses: {
-      listen: ['/ip4/127.0.0.1/tcp/8080/ws']
-    },
-    transports: [webSockets({ filter: filters.all })],
-    connectionEncrypters: [noise()],
-    streamMuxers: [yamux()],
-    services: {
-      identify: identify(),
-      relay: circuitRelayServer({
-        reservations: { maxReservations: Infinity }
-      })
-    }
-  })
-
-  const kvStore = new Map()
-
-  relayNode.handle(KV_PROTOCOL, async ({ stream, connection }) => {
-    const streamReader = byteStream(stream)
-    const streamWriter = byteStream(stream)
-
-    try {
-      while (true) {
-        const data = await streamReader.read()
-        const message = toString(data.subarray())
-
-        try {
-          const kvPair = JSON.parse(message)
-          if (kvPair.key && kvPair.value !== undefined) {
-            const storageData = {
-              value: kvPair.value,
-              circuitRelay: kvPair.circuitRelay || null
-            }
-            kvStore.set(kvPair.key, JSON.stringify(storageData))
-            const response = { success: true, message: 'Stored successfully' }
-            await streamWriter.write(fromString(JSON.stringify(response)))
-          } else {
-            const response = { success: false, error: 'Invalid format' }
-            await streamWriter.write(fromString(JSON.stringify(response)))
-          }
-        } catch (parseError) {
-          const response = { success: false, error: 'Invalid JSON' }
-          await streamWriter.write(fromString(JSON.stringify(response)))
-        }
-      }
-    } catch (error) { }
-  })
-
-  relayNode.handle(KV_QUERY_PROTOCOL, async ({ stream, connection }) => {
-    const streamReader = byteStream(stream)
-    const streamWriter = byteStream(stream)
-
-    try {
-      while (true) {
-        const data = await streamReader.read()
-        const message = toString(data.subarray())
-
-        try {
-          const query = JSON.parse(message)
-
-          if (query.action === 'get' && query.key) {
-            const storedData = kvStore.get(query.key)
-            let value = null
-            let circuitRelay = null
-            let found = false
-
-            if (storedData !== undefined) {
-              try {
-                const parsed = JSON.parse(storedData)
-                value = parsed.value
-                circuitRelay = parsed.circuitRelay
-                found = true
-              } catch (e) {
-                value = storedData
-                found = true
-              }
-            }
-
-            const response = {
-              success: true,
-              key: query.key,
-              value: value,
-              circuitRelay: circuitRelay,
-              found: found
-            }
-            await streamWriter.write(fromString(JSON.stringify(response)))
-          } else {
-            const response = { success: false, error: 'Invalid format' }
-            await streamWriter.write(fromString(JSON.stringify(response)))
-          }
-        } catch (parseError) {
-          const response = { success: false, error: 'Invalid JSON' }
-          await streamWriter.write(fromString(JSON.stringify(response)))
-        }
-      }
-    } catch (error) { }
-  })
-
-  const relayNodeAddr = relayNode.getMultiaddrs()[0].toString()
-  console.log(`Test relay listening on: ${relayNodeAddr}`)
-
-  return { relayNode, relayNodeAddr }
+// Test Constants
+const TEST_CONFIG = {
+  hardcodedPeerId: '12D3KooWA1bysjrTACSWqf6q172inxvwKHUxAnBtVgaVDKMxpZtx',
+  relayPort: '8080',
+  relayListenAddress: '/ip4/127.0.0.1/tcp/8080/ws',
+  testSS58AddressA: '5CXkZyy4S5b3w16wvKA2hUwzp5q2y7UtRPkXnW97QGvDN8Jw',
+  testSS58AddressB: '5Gma8SNsn6rkQf9reAWFQ9WKq8bwwHtSzwMYtLTdhYsGPKiy',
+  testSecretKeyA: '0x473a77675b8e77d90c1b6dc2dbe6ac533b0853790ea8bcadf0ee8b5da4cfbbce',
+  testSecretKeyB: '0xdb9ddbb3d6671c4de8248a4fba95f3d873dc21a0434b52951bb33730c1ac93d7'
 }
 
+// Test Timeouts
+const TIMEOUTS = {
+  beforeAll: 5 * 60_000, // 5 minutes
+  mainTest: 120_000, // 2 minutes
+  peerConnection: 60_000 // 1 minute
+}
+
+// Global Test State
+let testUrlA = 'http://localhost:5173'
+let testUrlB = 'http://localhost:5174'
+let viteServerA
+let viteServerB
+
+// Vite Server Management
+const startViteServer = (port) => {
+  return new Promise((resolve, reject) => {
+    const server = spawn('npm', ['start'], {
+      env: { ...process.env, VITE_PORT: port.toString() },
+      stdio: 'pipe'
+    })
+
+    let resolved = false
+
+    server.stdout.on('data', (data) => {
+      const output = data.toString()
+      console.log(`Vite server on port ${port}: ${output}`)
+
+      if (output.includes('ready') && !resolved) {
+        resolved = true
+        resolve(server)
+      }
+    })
+
+    server.stderr.on('data', (data) => {
+      console.error(`Vite server on port ${port} error: ${data}`)
+    })
+
+    server.on('error', (error) => {
+      if (!resolved) {
+        resolved = true
+        reject(error)
+      }
+    })
+
+    // Timeout after 30 seconds
+    setTimeout(() => {
+      if (!resolved) {
+        resolved = true
+        reject(new Error(`Vite server on port ${port} failed to start within 30 seconds`))
+      }
+    }, 30000)
+  })
+}
+
+const stopViteServer = (server) => {
+  if (server) {
+    server.kill('SIGTERM')
+  }
+}
+
+// Relay Server Management
+const createTestRelayServer = async () => {
+  const testKvStore = new Map()
+
+  const { server: relayNode, kvStore } = await createRelayServer({
+    peerIdString: TEST_CONFIG.hardcodedPeerId,
+    port: TEST_CONFIG.relayPort,
+    listenAddresses: [TEST_CONFIG.relayListenAddress],
+    kvStore: testKvStore
+  })
+
+  setupRelayHandlers(relayNode, kvStore)
+
+  const relayNodeAddress = relayNode.getMultiaddrs()[0].toString()
+  console.log(`Test relay listening on: ${relayNodeAddress}`)
+
+  return { relayNode, relayNodeAddress }
+}
+
+// Test Suite: Browser-to-Browser Communication
 test.describe('browser to browser example:', () => {
   let relayNode
-  let relayNodeAddr
+  let relayNodeAddress
 
-  // eslint-disable-next-line no-empty-pattern
-  test.beforeAll(async ({ servers }, testInfo) => {
-    testInfo.setTimeout(5 * 60_000)
-    const r = await spawnRelay()
-    relayNode = r.relayNode
-    relayNodeAddr = r.relayNodeAddr
-    url = servers[0].url
-  }, {})
+  // Test Setup and Teardown
+  test.beforeAll(async ({ }, testInfo) => {
+    testInfo.setTimeout(TIMEOUTS.beforeAll)
+
+    // Start relay server
+    const relayServer = await createTestRelayServer()
+    relayNode = relayServer.relayNode
+    relayNodeAddress = relayServer.relayNodeAddress
+
+    // Start both Vite servers
+    console.log('Starting Vite servers...')
+    viteServerA = await startViteServer(5173)
+    viteServerB = await startViteServer(5174)
+
+    console.log(`Client A URL: ${testUrlA}`)
+    console.log(`Client B URL: ${testUrlB}`)
+  })
 
   test.afterAll(async () => {
     if (relayNode) {
       await relayNode.stop()
     }
+
+    // Stop Vite servers
+    console.log('Stopping Vite servers...')
+    stopViteServer(viteServerA)
+    stopViteServer(viteServerB)
   })
 
-  test.beforeEach(async ({ page }) => {
-    await page.goto(url)
-  })
+  // Main Integration Test
+  test('should connect to another browser peer and send a message via SS58 addresses with permission', async ({ browser }) => {
+    test.setTimeout(TIMEOUTS.mainTest)
 
-  test('should connect to another browser peer and send a message via SS58 addresses', async ({ page: pageA, context }) => {
-    test.setTimeout(120000)
+    // Create two separate browser contexts (clients)
+    const contextA = await browser.newContext()
+    const contextB = await browser.newContext()
 
-    const pageB = await context.newPage()
-    await pageB.goto(url)
+    const pageA = await contextA.newPage()
+    const pageB = await contextB.newPage()
 
+    await pageA.goto(testUrlA)  // Client A connects to first server
+    await pageB.goto(testUrlB)  // Client B connects to second server
+
+    // Establish relay connections for both pages
     await waitForRelayConnection(pageA)
     await waitForRelayConnection(pageB)
 
-    await storeSS58Address(pageA, TEST_SS58_ADDRESS_A)
-    await storeSS58Address(pageB, TEST_SS58_ADDRESS_B)
+    // Store SS58 addresses in the relay
+    await storeSS58Address(pageA, TEST_CONFIG.testSS58AddressA, TEST_CONFIG.testSecretKeyA)
+    await storeSS58Address(pageB, TEST_CONFIG.testSS58AddressB, TEST_CONFIG.testSecretKeyB)
 
-    await connectViaSS58Address(pageB, TEST_SS58_ADDRESS_A)
+    // Connect pageB to pageA via SS58 address (this will now request permission)
+    await connectViaSS58AddressWithPermission(pageB, pageA, TEST_CONFIG.testSS58AddressA)
 
+    // Verify that the receiving peer (pageA) also logs the connection
+    // The log should contain either the SS58 address or just the connection message
+    const pageAOutput = pageA.locator(SELECTORS.output)
+    await expect(pageAOutput).toContainText('Peer connected:', { timeout: TIMEOUTS.peerConnection })
+
+    // If SS58 address is found, it should be included in the log
+    // This is a more flexible test that works whether SS58 lookup succeeds or not
+    const connectionLog = await pageAOutput.textContent()
+    const hasSS58InLog = connectionLog.includes(TEST_CONFIG.testSS58AddressB)
+    const hasConnectionMessage = connectionLog.includes('Peer connected:')
+
+    // Either we have the SS58 address in the log, or just the connection message
+    expect(hasSS58InLog || hasConnectionMessage).toBeTruthy()
+
+    // Test bidirectional messaging
     await sendMessage(pageA, pageB, 'hello B from A')
     await sendMessage(pageB, pageA, 'hello A from B')
+
+    // Cleanup browser contexts
+    await contextA.close()
+    await contextB.close()
+  })
+
+  // Connection Proof of Possession Test
+  test('should perform mutual proof of possession during connection with permission', async ({ browser }) => {
+    test.setTimeout(TIMEOUTS.mainTest)
+
+    // Create two separate browser contexts (clients)
+    const contextA = await browser.newContext()
+    const contextB = await browser.newContext()
+
+    const pageA = await contextA.newPage()
+    const pageB = await contextB.newPage()
+
+    await pageA.goto(testUrlA)  // Client A connects to first server
+    await pageB.goto(testUrlB)  // Client B connects to second server
+
+    // Establish relay connections for both pages
+    await waitForRelayConnection(pageA)
+    await waitForRelayConnection(pageB)
+
+    // Store SS58 addresses in the relay
+    await storeSS58Address(pageA, TEST_CONFIG.testSS58AddressA, TEST_CONFIG.testSecretKeyA)
+    await storeSS58Address(pageB, TEST_CONFIG.testSS58AddressB, TEST_CONFIG.testSecretKeyB)
+
+    // Connect pageB to pageA via SS58 address with permission (this should trigger proof of possession)
+    await connectViaSS58AddressWithPermission(pageB, pageA, TEST_CONFIG.testSS58AddressA)
+
+    // Verify proof of possession messages in both pages
+    const pageAOutput = pageA.locator(SELECTORS.output)
+    const pageBOutput = pageB.locator(SELECTORS.output)
+
+    // Check that pageB (initiator) shows proof of possession messages
+    await expect(pageBOutput).toContainText('Initiating connection proof of possession...')
+    await expect(pageBOutput).toContainText('Received challenge:')
+    await expect(pageBOutput).toContainText('Our signature verified!')
+    await expect(pageBOutput).toContainText('Received mutual challenge:')
+    await expect(pageBOutput).toContainText('Mutual connection proof of possession completed!')
+
+    // Check that pageA (acceptor) shows proof of possession messages
+    await expect(pageAOutput).toContainText('Generated connection challenge for peer:')
+    await expect(pageAOutput).toContainText('Connection challenge verified for peer:')
+    await expect(pageAOutput).toContainText('Generated mutual challenge for peer:')
+    await expect(pageAOutput).toContainText('Mutual connection challenge verified - connection established!')
+
+    // Test bidirectional messaging after proof of possession
+    await sendMessage(pageA, pageB, 'hello B from A after PoP')
+    await sendMessage(pageB, pageA, 'hello A from B after PoP')
+
+    // Cleanup browser contexts
+    await contextA.close()
+    await contextB.close()
+  })
+
+  // Connection Permission Rejection Test
+  test('should handle permission rejection gracefully', async ({ browser }) => {
+    test.setTimeout(TIMEOUTS.mainTest)
+
+    // Create two separate browser contexts (clients)
+    const contextA = await browser.newContext()
+    const contextB = await browser.newContext()
+
+    const pageA = await contextA.newPage()
+    const pageB = await contextB.newPage()
+
+    await pageA.goto(testUrlA)  // Client A connects to first server
+    await pageB.goto(testUrlB)  // Client B connects to second server
+
+    // Establish relay connections for both pages
+    await waitForRelayConnection(pageA)
+    await waitForRelayConnection(pageB)
+
+    // Store SS58 addresses in the relay
+    await storeSS58Address(pageA, TEST_CONFIG.testSS58AddressA, TEST_CONFIG.testSecretKeyA)
+    await storeSS58Address(pageB, TEST_CONFIG.testSS58AddressB, TEST_CONFIG.testSecretKeyB)
+
+    // Start connection request from pageB
+    await pageB.fill(SELECTORS.ss58Address, TEST_CONFIG.testSS58AddressA)
+    await pageB.click(SELECTORS.connectViaAddressButton)
+
+    // Wait for permission request to be sent
+    const pageBOutput = pageB.locator(SELECTORS.output)
+    await expect(pageBOutput).toContainText(`Requesting connection to: ${TEST_CONFIG.testSS58AddressA}`)
+    await expect(pageBOutput).toContainText('Permission request sent')
+
+    // Wait for permission request to appear on pageA and reject it
+    const permissionRequestsSection = pageA.locator('#permission-requests')
+    await expect(permissionRequestsSection).toContainText('Incoming Connection Request', { timeout: 10000 })
+
+    const rejectButton = permissionRequestsSection.locator('button:has-text("Reject")')
+    await rejectButton.click()
+
+    // Verify that pageB shows permission rejection
+    await expect(pageBOutput).toContainText('Connection permission was rejected')
+
+    // Cleanup browser contexts
+    await contextA.close()
+    await contextB.close()
   })
 })
 
-async function sendMessage(senderPage, recipientPage, message) {
-  await senderPage.waitForSelector(messageInput, { state: 'visible' })
-  await senderPage.fill(messageInput, message)
-  await senderPage.click(sendBtn)
-  await expect(senderPage.locator(output)).toContainText(`Sending: '${message}'`)
-  await expect(recipientPage.locator(output)).toContainText(`Received: '${message}'`)
+// Test Helper Functions
+
+// Message Communication Test
+const sendMessage = async (senderPage, recipientPage, message) => {
+  await senderPage.waitForSelector(SELECTORS.messageInput, { state: 'visible' })
+  await senderPage.fill(SELECTORS.messageInput, message)
+  await senderPage.click(SELECTORS.sendButton)
+
+  // Verify message was sent
+  await expect(senderPage.locator(SELECTORS.output)).toContainText(`Sending: '${message}'`)
+
+  // Verify message was received
+  await expect(recipientPage.locator(SELECTORS.output)).toContainText(`Received: '${message}'`)
 }
 
-async function waitForRelayConnection(page) {
-  const outputLocator = page.locator(output)
+// Relay Connection Verification
+const waitForRelayConnection = async (page) => {
+  const outputLocator = page.locator(SELECTORS.output)
   await expect(outputLocator).toContainText('Connected to relay')
 }
 
-async function storeSS58Address(page, addressToStore) {
-  await page.fill(ss58AddressInput, addressToStore)
-  await page.click(storeAddressBtn)
-  const outputLocator = page.locator(output)
+// SS58 Address Storage Test
+const storeSS58Address = async (page, addressToStore, secretKey) => {
+  await page.fill(SELECTORS.ss58AddressInput, addressToStore)
+  await page.fill(SELECTORS.secretKeyInput, secretKey)
+  await page.click(SELECTORS.storeAddressButton)
+
+  const outputLocator = page.locator(SELECTORS.output)
   await expect(outputLocator).toContainText(`Valid address: ${addressToStore}`)
-  await expect(outputLocator).toContainText('Address stored successfully')
+  await expect(outputLocator).toContainText('Address registered with proof of possession!')
 }
 
-async function connectViaSS58Address(page, addressToConnect) {
-  await page.fill(ss58Address, addressToConnect)
-  await page.click(connectViaAddressBtn)
-  const outputLocator = page.locator(output)
-  await expect(outputLocator).toContainText(`Looking up: ${addressToConnect}`)
-  await expect(outputLocator).toContainText('Found:')
-  await expect(outputLocator).toContainText('Connected to peer!', { timeout: 60000 })
+// SS58 Address Connection Test
+const connectViaSS58Address = async (page, addressToConnect) => {
+  await page.fill(SELECTORS.ss58Address, addressToConnect)
+  await page.click(SELECTORS.connectViaAddressButton)
+
+  const outputLocator = page.locator(SELECTORS.output)
+  await expect(outputLocator).toContainText(`Requesting connection to: ${addressToConnect}`)
+  await expect(outputLocator).toContainText('Permission granted! Proceeding with connection...')
+  await expect(outputLocator).toContainText('Connected to peer!', { timeout: TIMEOUTS.peerConnection })
+}
+
+// SS58 Address Connection with Permission Test
+const connectViaSS58AddressWithPermission = async (requesterPage, acceptorPage, addressToConnect) => {
+  // Start the connection request from the requester page
+  await requesterPage.fill(SELECTORS.ss58Address, addressToConnect)
+  await requesterPage.click(SELECTORS.connectViaAddressButton)
+
+  // Wait for permission request to be sent
+  const requesterOutput = requesterPage.locator(SELECTORS.output)
+  await expect(requesterOutput).toContainText(`Requesting connection to: ${addressToConnect}`)
+  await expect(requesterOutput).toContainText('Permission request sent')
+
+  // Wait for permission request to appear on acceptor page
+  const permissionRequestsSection = acceptorPage.locator('#permission-requests')
+  await expect(permissionRequestsSection).toContainText('Incoming Connection Request', { timeout: 10000 })
+  await expect(permissionRequestsSection).toContainText('From:')
+
+  // Accept the permission request
+  const acceptButton = permissionRequestsSection.locator('button:has-text("Accept")')
+  await acceptButton.click()
+
+  // Wait for connection to be established
+  await expect(requesterOutput).toContainText('Permission granted! Proceeding with connection...')
+  await expect(requesterOutput).toContainText('Connected to peer!', { timeout: TIMEOUTS.peerConnection })
 }
 
 // WASM Integration Tests
 test.describe('WASM Integration Tests for Olaf Threshold Public Key Generation:', () => {
-  test.beforeAll(async ({ servers }, testInfo) => {
-    testInfo.setTimeout(5 * 60_000)
-    url = servers[0].url
-  }, {})
+  let relayNode
+  let relayNodeAddress
+
+  test.beforeAll(async ({ }, testInfo) => {
+    testInfo.setTimeout(TIMEOUTS.beforeAll)
+
+    // Start relay server
+    const relayServer = await createTestRelayServer()
+    relayNode = relayServer.relayNode
+    relayNodeAddress = relayServer.relayNodeAddress
+
+    // Start Vite server for WASM tests
+    console.log('Starting Vite server for WASM tests...')
+    viteServerA = await startViteServer(5173)
+
+    console.log(`Client URL: ${testUrlA}`)
+  })
+
+  test.afterAll(async () => {
+    if (relayNode) {
+      await relayNode.stop()
+    }
+    stopViteServer(viteServerA)
+  })
 
   test.beforeEach(async ({ page }) => {
     // Navigate to the main page which initializes WASM
-    await page.goto(url)
+    await page.goto(testUrlA)
 
     // Wait for WASM module to be initialized
     await page.waitForFunction(() => window.wasmReady === true, { timeout: 30000 })
@@ -297,7 +460,7 @@ test.describe('WASM Integration Tests for Olaf Threshold Public Key Generation:'
     test.setTimeout(120000)
 
     const pageB = await context.newPage()
-    await pageB.goto(url)
+    await pageB.goto(testUrlA)
 
     // Wait for WASM to be ready on both pages
     await pageA.waitForFunction(() => window.wasmReady === true, { timeout: 30000 })

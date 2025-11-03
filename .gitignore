@@ -1,7 +1,7 @@
 node_modules/
 dist/
 test-results/
+target/
+playwright-report/
 olaf/target/
 olaf/pkg/
-playwright-report/
-target/
