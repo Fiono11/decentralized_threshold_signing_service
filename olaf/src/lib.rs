@@ -3,6 +3,8 @@ use js_sys::Uint8Array;
 use schnorrkel::olaf::SigningKeypair;
 use schnorrkel::olaf::multisig::SigningCommitments;
 use schnorrkel::olaf::multisig::SigningNonces;
+use schnorrkel::olaf::multisig::SigningPackage;
+use schnorrkel::olaf::multisig::aggregate;
 use schnorrkel::olaf::simplpedpop::AllMessage;
 use schnorrkel::olaf::simplpedpop::SPPOutputMessage;
 use schnorrkel::{KEYPAIR_LENGTH, Keypair, MiniSecretKey, PUBLIC_KEY_LENGTH, PublicKey};
@@ -222,6 +224,36 @@ pub fn wasm_threshold_sign_round2(
     Ok(Uint8Array::from(signing_package.to_bytes().as_slice()))
 }
 
+#[wasm_bindgen]
+pub fn wasm_aggregate_threshold_signature(
+    signing_packages_json: &[u8],
+) -> Result<Uint8Array, JsValue> {
+    // Parse signing packages from JSON array
+    let signing_packages_string = String::from_utf8(signing_packages_json.to_vec())
+        .map_err(|_| JsValue::from_str("invalid UTF-8 in signing_packages_json"))?;
+
+    let signing_packages_bytes_vec: Vec<Vec<u8>> = serde_json::from_str(&signing_packages_string)
+        .map_err(|e| {
+        JsValue::from_str(&format!("Failed to deserialize signing packages: {}", e))
+    })?;
+
+    let signing_packages: Vec<SigningPackage> = signing_packages_bytes_vec
+        .iter()
+        .map(|sp_bytes| {
+            SigningPackage::from_bytes(sp_bytes)
+                .map_err(|e| JsValue::from_str(&format!("Failed to parse SigningPackage: {:?}", e)))
+        })
+        .collect::<Result<_, _>>()?;
+
+    // Aggregate the signing packages into a final signature
+    let group_signature = aggregate(&signing_packages).map_err(|e| {
+        JsValue::from_str(&format!("Failed to aggregate threshold signature: {:?}", e))
+    })?;
+
+    // Return signature bytes
+    Ok(Uint8Array::from(group_signature.to_bytes().as_slice()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -426,6 +458,74 @@ mod tests {
         }
 
         println!("Round 2 signing completed successfully for all participants!");
+
+        // Test signature aggregation
+        println!("\n=== TESTING SIGNATURE AGGREGATION ===");
+
+        // Aggregate all signing packages into a final signature
+        let final_signature =
+            aggregate(&round2_outputs).expect("Failed to aggregate threshold signature");
+
+        println!(
+            "Aggregated signature bytes length: {}",
+            final_signature.to_bytes().len()
+        );
+
+        // Verify the aggregated signature with the threshold public key
+        let verification_result =
+            threshold_pk_0
+                .0
+                .verify_simple(context.as_bytes(), payload, &final_signature);
+
+        assert!(
+            verification_result.is_ok(),
+            "Aggregated signature should be valid for the threshold public key"
+        );
+
+        println!("✓ Aggregated signature verified successfully!");
+
+        // Test round-trip serialization of signature
+        let signature_bytes = final_signature.to_bytes();
+        println!("Signature serialization: {} bytes", signature_bytes.len());
+        assert!(!signature_bytes.is_empty(), "Signature should not be empty");
+
+        // Test that aggregating the same signing packages produces the same signature
+        let final_signature_2 = aggregate(&round2_outputs)
+            .expect("Failed to aggregate threshold signature on second attempt");
+
+        assert_eq!(
+            final_signature.to_bytes(),
+            final_signature_2.to_bytes(),
+            "Aggregating the same signing packages should produce the same signature"
+        );
+
+        println!("✓ Signature aggregation is deterministic!");
+
+        // Test that all signature shares are required
+        assert_eq!(
+            round2_outputs.len(),
+            threshold as usize,
+            "We should have exactly threshold signature shares"
+        );
+
+        // Test signature aggregation with fewer shares should fail
+        if threshold > 1 {
+            let insufficient_shares = &round2_outputs[..threshold as usize - 1];
+            let aggregation_result = aggregate(insufficient_shares);
+            assert!(
+                aggregation_result.is_err(),
+                "Aggregating with fewer than threshold shares should fail"
+            );
+            println!("✓ Verified that insufficient shares fail aggregation");
+        }
+
         println!("\n=== ALL TESTS PASSED ===");
+
+        assert!(
+            threshold_pk_0
+                .0
+                .verify_simple(context.as_bytes(), payload, &final_signature)
+                .is_ok()
+        );
     }
 }

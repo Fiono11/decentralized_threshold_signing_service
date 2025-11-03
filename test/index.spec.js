@@ -672,3 +672,575 @@ test.describe('WASM Integration Tests for Olaf Threshold Public Key Generation:'
     console.log(`✓ Signing Keypair 2: ${result.signingKeypair2Length} bytes`)
   })
 })
+
+// Threshold Signing Rounds Tests
+test.describe('Threshold Signing Rounds Tests:', () => {
+  let relayNode
+  let relayNodeAddress
+
+  test.beforeAll(async ({ }, testInfo) => {
+    testInfo.setTimeout(TIMEOUTS.beforeAll)
+
+    // Start relay server
+    const relayServer = await createTestRelayServer()
+    relayNode = relayServer.relayNode
+    relayNodeAddress = relayServer.relayNodeAddress
+
+    // Start Vite server for signing tests
+    console.log('Starting Vite server for signing tests...')
+    viteServerA = await startViteServer(5173)
+
+    console.log(`Client URL: ${testUrlA}`)
+  })
+
+  test.afterAll(async () => {
+    if (relayNode) {
+      await relayNode.stop()
+    }
+    stopViteServer(viteServerA)
+  })
+
+  test.beforeEach(async ({ page }) => {
+    // Navigate to the main page which initializes WASM
+    await page.goto(testUrlA)
+
+    // Wait for WASM module to be initialized
+    await page.waitForFunction(() => window.wasmReady === true, { timeout: 30000 })
+  })
+
+  test('should successfully run Round 1 signing for both participants', async ({ page: pageA, context }) => {
+    test.setTimeout(120000)
+
+    const pageB = await context.newPage()
+    await pageB.goto(testUrlA)
+
+    // Wait for WASM to be ready on both pages
+    await pageA.waitForFunction(() => window.wasmReady === true, { timeout: 30000 })
+    await pageB.waitForFunction(() => window.wasmReady === true, { timeout: 30000 })
+
+    // First, generate threshold keys using SimplPedPoP
+    const thresholdResults = await generateThresholdKeys(pageA, pageB)
+
+    // Test Round 1 for participant 1
+    const round1ResultA = await pageA.evaluate(({ signingKeypair }) => {
+      const result = window.wasm_threshold_sign_round1(new Uint8Array(signingKeypair))
+      return {
+        signingNonces: result.signing_nonces,
+        signingCommitments: result.signing_commitments
+      }
+    }, { signingKeypair: Array.from(thresholdResults.signingKeypair1) })
+
+    // Test Round 1 for participant 2
+    const round1ResultB = await pageB.evaluate(({ signingKeypair }) => {
+      const result = window.wasm_threshold_sign_round1(new Uint8Array(signingKeypair))
+      return {
+        signingNonces: result.signing_nonces,
+        signingCommitments: result.signing_commitments
+      }
+    }, { signingKeypair: Array.from(thresholdResults.signingKeypair2) })
+
+    // Validate Round 1 results
+    expect(round1ResultA.signingNonces).toBeTruthy()
+    expect(round1ResultA.signingCommitments).toBeTruthy()
+    expect(round1ResultB.signingNonces).toBeTruthy()
+    expect(round1ResultB.signingCommitments).toBeTruthy()
+
+    // Parse JSON strings
+    const noncesA = JSON.parse(round1ResultA.signingNonces)
+    const commitmentsA = JSON.parse(round1ResultA.signingCommitments)
+    const noncesB = JSON.parse(round1ResultB.signingNonces)
+    const commitmentsB = JSON.parse(round1ResultB.signingCommitments)
+
+    // Validate that nonces and commitments are arrays of bytes
+    expect(Array.isArray(noncesA)).toBe(true)
+    expect(Array.isArray(commitmentsA)).toBe(true)
+    expect(Array.isArray(noncesB)).toBe(true)
+    expect(Array.isArray(commitmentsB)).toBe(true)
+
+    // Validate that nonces have non-zero length
+    expect(noncesA.length).toBeGreaterThan(0)
+    expect(noncesB.length).toBeGreaterThan(0)
+    expect(commitmentsA.length).toBeGreaterThan(0)
+    expect(commitmentsB.length).toBeGreaterThan(0)
+
+    console.log(`✓ Round 1 signing completed for both participants`)
+    console.log(`✓ Participant 1 nonces: ${noncesA.length} bytes`)
+    console.log(`✓ Participant 1 commitments: ${commitmentsA.length} bytes`)
+    console.log(`✓ Participant 2 nonces: ${noncesB.length} bytes`)
+    console.log(`✓ Participant 2 commitments: ${commitmentsB.length} bytes`)
+
+    await pageB.close()
+  })
+
+  test('should successfully run Round 2 signing for both participants', async ({ page: pageA, context }) => {
+    test.setTimeout(120000)
+
+    const pageB = await context.newPage()
+    await pageB.goto(testUrlA)
+
+    // Wait for WASM to be ready on both pages
+    await pageA.waitForFunction(() => window.wasmReady === true, { timeout: 30000 })
+    await pageB.waitForFunction(() => window.wasmReady === true, { timeout: 30000 })
+
+    // First, generate threshold keys using SimplPedPoP
+    const thresholdResults = await generateThresholdKeys(pageA, pageB)
+
+    // Run Round 1 for both participants
+    const round1Results = await runRound1(pageA, pageB, thresholdResults)
+
+    // Prepare test payload and context for Round 2
+    const signingContext = 'test context for threshold signing'
+    const payload = new TextEncoder().encode('test payload to sign with threshold signature')
+
+    // Run Round 2 for participant 1
+    const signingPackageA = await pageA.evaluate(({
+      signingKeypair,
+      signingNonces,
+      allCommitments,
+      sppOutputMessage,
+      payload,
+      signingContext
+    }) => {
+      // Parse JSON commitments
+      const commitmentsArray = JSON.parse(allCommitments)
+      const commitmentsJson = JSON.stringify(commitmentsArray)
+      const commitmentsBytes = new TextEncoder().encode(commitmentsJson)
+
+      const result = window.wasm_threshold_sign_round2(
+        new Uint8Array(signingKeypair),
+        new Uint8Array(signingNonces),
+        commitmentsBytes,
+        new Uint8Array(sppOutputMessage),
+        new Uint8Array(payload),
+        signingContext
+      )
+      return Array.from(result)
+    }, {
+      signingKeypair: Array.from(thresholdResults.signingKeypair1),
+      signingNonces: round1Results.noncesA,
+      allCommitments: JSON.stringify([round1Results.commitmentsA, round1Results.commitmentsB]),
+      sppOutputMessage: Array.from(thresholdResults.sppOutputMessage1),
+      payload: Array.from(payload),
+      signingContext
+    })
+
+    // Run Round 2 for participant 2
+    const signingPackageB = await pageB.evaluate(({
+      signingKeypair,
+      signingNonces,
+      allCommitments,
+      sppOutputMessage,
+      payload,
+      signingContext
+    }) => {
+      // Parse JSON commitments
+      const commitmentsArray = JSON.parse(allCommitments)
+      const commitmentsJson = JSON.stringify(commitmentsArray)
+      const commitmentsBytes = new TextEncoder().encode(commitmentsJson)
+
+      const result = window.wasm_threshold_sign_round2(
+        new Uint8Array(signingKeypair),
+        new Uint8Array(signingNonces),
+        commitmentsBytes,
+        new Uint8Array(sppOutputMessage),
+        new Uint8Array(payload),
+        signingContext
+      )
+      return Array.from(result)
+    }, {
+      signingKeypair: Array.from(thresholdResults.signingKeypair2),
+      signingNonces: round1Results.noncesB,
+      allCommitments: JSON.stringify([round1Results.commitmentsA, round1Results.commitmentsB]),
+      sppOutputMessage: Array.from(thresholdResults.sppOutputMessage2),
+      payload: Array.from(payload),
+      signingContext
+    })
+
+    // Validate Round 2 results
+    expect(signingPackageA.length).toBeGreaterThan(0)
+    expect(signingPackageB.length).toBeGreaterThan(0)
+
+    console.log(`✓ Round 2 signing completed for both participants`)
+    console.log(`✓ Participant 1 signing package: ${signingPackageA.length} bytes`)
+    console.log(`✓ Participant 2 signing package: ${signingPackageB.length} bytes`)
+
+    await pageB.close()
+  })
+
+  test('should successfully aggregate threshold signature', async ({ page: pageA, context }) => {
+    test.setTimeout(120000)
+
+    const pageB = await context.newPage()
+    await pageB.goto(testUrlA)
+
+    // Wait for WASM to be ready on both pages
+    await pageA.waitForFunction(() => window.wasmReady === true, { timeout: 30000 })
+    await pageB.waitForFunction(() => window.wasmReady === true, { timeout: 30000 })
+
+    // First, generate threshold keys using SimplPedPoP
+    const thresholdResults = await generateThresholdKeys(pageA, pageB)
+
+    // Run Round 1 for both participants
+    const round1Results = await runRound1(pageA, pageB, thresholdResults)
+
+    // Prepare test payload and context for Round 2
+    const signingContext = 'test context for threshold signing'
+    const payload = new TextEncoder().encode('test payload to sign with threshold signature')
+
+    // Run Round 2 for both participants
+    const signingPackages = await runRound2(pageA, pageB, thresholdResults, round1Results, payload, signingContext)
+
+    // Aggregate signing packages
+    const aggregatedSignature = await pageA.evaluate(({ signingPackages }) => {
+      const signingPackagesJson = JSON.stringify(signingPackages)
+      const signingPackagesBytes = new TextEncoder().encode(signingPackagesJson)
+      const result = window.wasm_aggregate_threshold_signature(signingPackagesBytes)
+      return Array.from(result)
+    }, {
+      signingPackages: [signingPackages.packageA, signingPackages.packageB]
+    })
+
+    // Validate aggregated signature
+    expect(aggregatedSignature.length).toBeGreaterThan(0)
+
+    console.log(`✓ Signature aggregation completed`)
+    console.log(`✓ Aggregated signature: ${aggregatedSignature.length} bytes`)
+    console.log(`✓ Signature (hex): ${aggregatedSignature.map(b => b.toString(16).padStart(2, '0')).join('')}`)
+
+    await pageB.close()
+  })
+
+  test('should run complete threshold signing protocol (port of Rust test)', async ({ page: pageA, context }) => {
+    test.setTimeout(120000)
+
+    const pageB = await context.newPage()
+    await pageB.goto(testUrlA)
+
+    // Wait for WASM to be ready on both pages
+    await pageA.waitForFunction(() => window.wasmReady === true, { timeout: 30000 })
+    await pageB.waitForFunction(() => window.wasmReady === true, { timeout: 30000 })
+
+    const result = await pageA.evaluate(({
+      secretKey1,
+      secretKey2,
+      recipients,
+      threshold,
+      payloadText,
+      contextText
+    }) => {
+      console.log('Running complete threshold signing protocol:')
+      console.log(`Threshold: ${threshold}`)
+      console.log(`Participants: 2`)
+
+      // Step 1: Generate threshold keys using SimplPedPoP
+      const keypair1Bytes = window.createKeypairBytes(secretKey1)
+      const keypair2Bytes = window.createKeypairBytes(secretKey2)
+
+      const recipient1Bytes = window.ss58ToPublicKeyBytes(recipients[0])
+      const recipient2Bytes = window.ss58ToPublicKeyBytes(recipients[1])
+      const recipientsConcat = new Uint8Array(recipient1Bytes.length + recipient2Bytes.length)
+      recipientsConcat.set(recipient1Bytes, 0)
+      recipientsConcat.set(recipient2Bytes, recipient1Bytes.length)
+
+      const allMessage1 = window.wasm_simplpedpop_contribute_all(keypair1Bytes, threshold, recipientsConcat)
+      const allMessage2 = window.wasm_simplpedpop_contribute_all(keypair2Bytes, threshold, recipientsConcat)
+
+      const allMessagesArray = [
+        Array.from(allMessage1),
+        Array.from(allMessage2)
+      ]
+      const allMessagesJson = JSON.stringify(allMessagesArray)
+      const allMessagesBytes = new TextEncoder().encode(allMessagesJson)
+
+      const result1 = window.wasm_simplpedpop_recipient_all(keypair1Bytes, allMessagesBytes)
+      const result2 = window.wasm_simplpedpop_recipient_all(keypair2Bytes, allMessagesBytes)
+
+      const thresholdKey1 = result1.threshold_public_key
+      const sppOutputMessage1 = result1.spp_output_message
+      const signingKeypair1 = result1.signing_keypair
+      const sppOutputMessage2 = result2.spp_output_message
+      const signingKeypair2 = result2.signing_keypair
+
+      // Verify threshold keys match
+      const thresholdKey1Bytes = Array.from(thresholdKey1)
+      const thresholdKey2Bytes = Array.from(result2.threshold_public_key)
+      const keysMatch = thresholdKey1Bytes.length === thresholdKey2Bytes.length &&
+        thresholdKey1Bytes.every((byte, index) => byte === thresholdKey2Bytes[index])
+
+      if (!keysMatch) {
+        throw new Error('Threshold keys do not match!')
+      }
+
+      console.log(`Threshold Public Key: ${thresholdKey1Bytes.map(b => b.toString(16).padStart(2, '0')).join('')}`)
+
+      // Step 2: Round 1 signing
+      console.log('\n=== TESTING ROUND 1 SIGNING ===')
+      const round1Result1 = window.wasm_threshold_sign_round1(new Uint8Array(signingKeypair1))
+      const round1Result2 = window.wasm_threshold_sign_round1(new Uint8Array(signingKeypair2))
+
+      const nonces1 = JSON.parse(round1Result1.signing_nonces)
+      const commitments1 = JSON.parse(round1Result1.signing_commitments)
+      const nonces2 = JSON.parse(round1Result2.signing_nonces)
+      const commitments2 = JSON.parse(round1Result2.signing_commitments)
+
+      console.log(`Round 1 completed for both participants`)
+
+      // Step 3: Round 2 signing
+      console.log('\n=== TESTING ROUND 2 SIGNING ===')
+      const payload = new TextEncoder().encode(payloadText)
+
+      const commitmentsArray = [commitments1, commitments2]
+      const commitmentsJson = JSON.stringify(commitmentsArray)
+      const commitmentsBytes = new TextEncoder().encode(commitmentsJson)
+
+      const signingPackage1 = window.wasm_threshold_sign_round2(
+        new Uint8Array(signingKeypair1),
+        new Uint8Array(nonces1),
+        commitmentsBytes,
+        new Uint8Array(sppOutputMessage1),
+        new Uint8Array(payload),
+        contextText
+      )
+
+      const signingPackage2 = window.wasm_threshold_sign_round2(
+        new Uint8Array(signingKeypair2),
+        new Uint8Array(nonces2),
+        commitmentsBytes,
+        new Uint8Array(sppOutputMessage2),
+        new Uint8Array(payload),
+        contextText
+      )
+
+      console.log(`Round 2 completed for both participants`)
+      console.log(`Signing package 1: ${signingPackage1.length} bytes`)
+      console.log(`Signing package 2: ${signingPackage2.length} bytes`)
+
+      // Step 4: Aggregate signature
+      console.log('\n=== TESTING SIGNATURE AGGREGATION ===')
+      const signingPackagesArray = [
+        Array.from(signingPackage1),
+        Array.from(signingPackage2)
+      ]
+      const signingPackagesJson = JSON.stringify(signingPackagesArray)
+      const signingPackagesBytes = new TextEncoder().encode(signingPackagesJson)
+
+      const finalSignature = window.wasm_aggregate_threshold_signature(signingPackagesBytes)
+
+      console.log(`Aggregated signature: ${finalSignature.length} bytes`)
+      console.log(`Signature (hex): ${Array.from(finalSignature).map(b => b.toString(16).padStart(2, '0')).join('')}`)
+
+      return {
+        keysMatch,
+        thresholdKeyLength: thresholdKey1.length,
+        thresholdKeyHex: thresholdKey1Bytes.map(b => b.toString(16).padStart(2, '0')).join(''),
+        round1Nonces1Length: nonces1.length,
+        round1Commitments1Length: commitments1.length,
+        round1Nonces2Length: nonces2.length,
+        round1Commitments2Length: commitments2.length,
+        signingPackage1Length: signingPackage1.length,
+        signingPackage2Length: signingPackage2.length,
+        aggregatedSignatureLength: finalSignature.length,
+        aggregatedSignatureHex: Array.from(finalSignature).map(b => b.toString(16).padStart(2, '0')).join('')
+      }
+    }, {
+      secretKey1: TEST_SECRET_KEY_1,
+      secretKey2: TEST_SECRET_KEY_2,
+      recipients: TEST_RECIPIENTS,
+      threshold: 2,
+      payloadText: 'test payload to sign with threshold signature',
+      contextText: 'test context for threshold signing'
+    })
+
+    // Validate complete protocol results
+    expect(result.keysMatch).toBe(true)
+    expect(result.thresholdKeyLength).toBeGreaterThan(0)
+    expect(result.round1Nonces1Length).toBeGreaterThan(0)
+    expect(result.round1Commitments1Length).toBeGreaterThan(0)
+    expect(result.round1Nonces2Length).toBeGreaterThan(0)
+    expect(result.round1Commitments2Length).toBeGreaterThan(0)
+    expect(result.signingPackage1Length).toBeGreaterThan(0)
+    expect(result.signingPackage2Length).toBeGreaterThan(0)
+    expect(result.aggregatedSignatureLength).toBeGreaterThan(0)
+
+    console.log(`✓ Complete threshold signing protocol test passed`)
+    console.log(`✓ Threshold key: ${result.thresholdKeyLength} bytes`)
+    console.log(`✓ Aggregated signature: ${result.aggregatedSignatureLength} bytes`)
+    console.log(`✓ Signature (hex): ${result.aggregatedSignatureHex}`)
+
+    await pageB.close()
+  })
+})
+
+// Helper functions for signing tests
+async function generateThresholdKeys(pageA, pageB) {
+  // Generate AllMessages for both participants
+  const allMessageA = await pageA.evaluate(({ secretKey, recipients, threshold }) => {
+    const keypairBytes = window.createKeypairBytes(secretKey)
+    const recipient1Bytes = window.ss58ToPublicKeyBytes(recipients[0])
+    const recipient2Bytes = window.ss58ToPublicKeyBytes(recipients[1])
+    const recipientsConcat = new Uint8Array(recipient1Bytes.length + recipient2Bytes.length)
+    recipientsConcat.set(recipient1Bytes, 0)
+    recipientsConcat.set(recipient2Bytes, recipient1Bytes.length)
+    return window.wasm_simplpedpop_contribute_all(keypairBytes, threshold, recipientsConcat)
+  }, { secretKey: TEST_SECRET_KEY_1, recipients: TEST_RECIPIENTS, threshold: 2 })
+
+  const allMessageB = await pageB.evaluate(({ secretKey, recipients, threshold }) => {
+    const keypairBytes = window.createKeypairBytes(secretKey)
+    const recipient1Bytes = window.ss58ToPublicKeyBytes(recipients[0])
+    const recipient2Bytes = window.ss58ToPublicKeyBytes(recipients[1])
+    const recipientsConcat = new Uint8Array(recipient1Bytes.length + recipient2Bytes.length)
+    recipientsConcat.set(recipient1Bytes, 0)
+    recipientsConcat.set(recipient2Bytes, recipient1Bytes.length)
+    return window.wasm_simplpedpop_contribute_all(keypairBytes, threshold, recipientsConcat)
+  }, { secretKey: TEST_SECRET_KEY_2, recipients: TEST_RECIPIENTS, threshold: 2 })
+
+  // Process AllMessages to generate threshold keys
+  const resultA = await pageA.evaluate(({ secretKey, allMessageA, allMessageB }) => {
+    const keypairBytes = window.createKeypairBytes(secretKey)
+    const allMessagesArray = [
+      Array.from(allMessageA),
+      Array.from(allMessageB)
+    ]
+    const allMessagesJson = JSON.stringify(allMessagesArray)
+    const allMessagesBytes = new TextEncoder().encode(allMessagesJson)
+    const result = window.wasm_simplpedpop_recipient_all(keypairBytes, allMessagesBytes)
+    return {
+      thresholdPublicKey: Array.from(result.threshold_public_key),
+      sppOutputMessage: Array.from(result.spp_output_message),
+      signingKeypair: Array.from(result.signing_keypair)
+    }
+  }, {
+    secretKey: TEST_SECRET_KEY_1,
+    allMessageA: Array.from(allMessageA),
+    allMessageB: Array.from(allMessageB)
+  })
+
+  const resultB = await pageB.evaluate(({ secretKey, allMessageA, allMessageB }) => {
+    const keypairBytes = window.createKeypairBytes(secretKey)
+    const allMessagesArray = [
+      Array.from(allMessageA),
+      Array.from(allMessageB)
+    ]
+    const allMessagesJson = JSON.stringify(allMessagesArray)
+    const allMessagesBytes = new TextEncoder().encode(allMessagesJson)
+    const result = window.wasm_simplpedpop_recipient_all(keypairBytes, allMessagesBytes)
+    return {
+      thresholdPublicKey: Array.from(result.threshold_public_key),
+      sppOutputMessage: Array.from(result.spp_output_message),
+      signingKeypair: Array.from(result.signing_keypair)
+    }
+  }, {
+    secretKey: TEST_SECRET_KEY_2,
+    allMessageA: Array.from(allMessageA),
+    allMessageB: Array.from(allMessageB)
+  })
+
+  // Verify threshold keys match
+  const keysMatch = resultA.thresholdPublicKey.length === resultB.thresholdPublicKey.length &&
+    resultA.thresholdPublicKey.every((byte, index) => byte === resultB.thresholdPublicKey[index])
+
+  if (!keysMatch) {
+    throw new Error('Threshold keys do not match!')
+  }
+
+  return {
+    thresholdPublicKey1: resultA.thresholdPublicKey,
+    thresholdPublicKey2: resultB.thresholdPublicKey,
+    sppOutputMessage1: resultA.sppOutputMessage,
+    sppOutputMessage2: resultB.sppOutputMessage,
+    signingKeypair1: resultA.signingKeypair,
+    signingKeypair2: resultB.signingKeypair
+  }
+}
+
+async function runRound1(pageA, pageB, thresholdResults) {
+  const round1ResultA = await pageA.evaluate(({ signingKeypair }) => {
+    const result = window.wasm_threshold_sign_round1(new Uint8Array(signingKeypair))
+    return {
+      signingNonces: result.signing_nonces,
+      signingCommitments: result.signing_commitments
+    }
+  }, { signingKeypair: Array.from(thresholdResults.signingKeypair1) })
+
+  const round1ResultB = await pageB.evaluate(({ signingKeypair }) => {
+    const result = window.wasm_threshold_sign_round1(new Uint8Array(signingKeypair))
+    return {
+      signingNonces: result.signing_nonces,
+      signingCommitments: result.signing_commitments
+    }
+  }, { signingKeypair: Array.from(thresholdResults.signingKeypair2) })
+
+  return {
+    noncesA: JSON.parse(round1ResultA.signingNonces),
+    commitmentsA: JSON.parse(round1ResultA.signingCommitments),
+    noncesB: JSON.parse(round1ResultB.signingNonces),
+    commitmentsB: JSON.parse(round1ResultB.signingCommitments)
+  }
+}
+
+async function runRound2(pageA, pageB, thresholdResults, round1Results, payload, context) {
+  const signingPackageA = await pageA.evaluate(({
+    signingKeypair,
+    signingNonces,
+    allCommitments,
+    sppOutputMessage,
+    payload,
+    context
+  }) => {
+    const commitmentsArray = JSON.parse(allCommitments)
+    const commitmentsJson = JSON.stringify(commitmentsArray)
+    const commitmentsBytes = new TextEncoder().encode(commitmentsJson)
+
+    const result = window.wasm_threshold_sign_round2(
+      new Uint8Array(signingKeypair),
+      new Uint8Array(signingNonces),
+      commitmentsBytes,
+      new Uint8Array(sppOutputMessage),
+      new Uint8Array(payload),
+      context
+    )
+    return Array.from(result)
+  }, {
+    signingKeypair: Array.from(thresholdResults.signingKeypair1),
+    signingNonces: round1Results.noncesA,
+    allCommitments: JSON.stringify([round1Results.commitmentsA, round1Results.commitmentsB]),
+    sppOutputMessage: Array.from(thresholdResults.sppOutputMessage1),
+    payload: Array.from(payload),
+    context
+  })
+
+  const signingPackageB = await pageB.evaluate(({
+    signingKeypair,
+    signingNonces,
+    allCommitments,
+    sppOutputMessage,
+    payload,
+    context
+  }) => {
+    const commitmentsArray = JSON.parse(allCommitments)
+    const commitmentsJson = JSON.stringify(commitmentsArray)
+    const commitmentsBytes = new TextEncoder().encode(commitmentsJson)
+
+    const result = window.wasm_threshold_sign_round2(
+      new Uint8Array(signingKeypair),
+      new Uint8Array(signingNonces),
+      commitmentsBytes,
+      new Uint8Array(sppOutputMessage),
+      new Uint8Array(payload),
+      context
+    )
+    return Array.from(result)
+  }, {
+    signingKeypair: Array.from(thresholdResults.signingKeypair2),
+    signingNonces: round1Results.noncesB,
+    allCommitments: JSON.stringify([round1Results.commitmentsA, round1Results.commitmentsB]),
+    sppOutputMessage: Array.from(thresholdResults.sppOutputMessage2),
+    payload: Array.from(payload),
+    context
+  })
+
+  return {
+    packageA: signingPackageA,
+    packageB: signingPackageB
+  }
+}

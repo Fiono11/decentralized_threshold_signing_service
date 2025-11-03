@@ -16,7 +16,7 @@ import { decodeAddress, encodeAddress } from '@polkadot/keyring'
 import { cryptoWaitReady, sr25519Sign, sr25519Verify, sr25519PairFromSeed } from '@polkadot/util-crypto'
 import { hexToU8a } from '@polkadot/util'
 import { createEd25519PeerId } from '@libp2p/peer-id-factory'
-import initOlaf, { wasm_simplpedpop_contribute_all, wasm_keypair_from_secret, wasm_simplpedpop_recipient_all } from './olaf/pkg/olaf.js'
+import initOlaf, { wasm_simplpedpop_contribute_all, wasm_keypair_from_secret, wasm_simplpedpop_recipient_all, wasm_aggregate_threshold_signature, wasm_threshold_sign_round1, wasm_threshold_sign_round2 } from './olaf/pkg/olaf.js'
 
 // Constants
 const WEBRTC_CODE = WebRTC.code
@@ -1233,11 +1233,14 @@ window['connect-via-address'].onclick = async () => {
 const initializeWasm = async () => {
   try {
     await initOlaf()
-    
+
     // Expose WASM functions globally for testing
     window.wasm_simplpedpop_contribute_all = wasm_simplpedpop_contribute_all
     window.wasm_keypair_from_secret = wasm_keypair_from_secret
     window.wasm_simplpedpop_recipient_all = wasm_simplpedpop_recipient_all
+    window.wasm_aggregate_threshold_signature = wasm_aggregate_threshold_signature
+    window.wasm_threshold_sign_round1 = wasm_threshold_sign_round1
+    window.wasm_threshold_sign_round2 = wasm_threshold_sign_round2
     window.wasmReady = true
 
     // Expose helper functions for testing
