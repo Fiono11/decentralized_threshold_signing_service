@@ -1,7 +1,10 @@
 use js_sys::Object;
 use js_sys::Uint8Array;
 use schnorrkel::olaf::SigningKeypair;
+use schnorrkel::olaf::multisig::SigningCommitments;
+use schnorrkel::olaf::multisig::SigningNonces;
 use schnorrkel::olaf::simplpedpop::AllMessage;
+use schnorrkel::olaf::simplpedpop::SPPOutputMessage;
 use schnorrkel::{KEYPAIR_LENGTH, Keypair, MiniSecretKey, PUBLIC_KEY_LENGTH, PublicKey};
 use wasm_bindgen::JsValue;
 use wasm_bindgen::prelude::wasm_bindgen;
@@ -165,6 +168,60 @@ pub fn wasm_threshold_sign_round1(signing_share_bytes: &[u8]) -> Result<JsValue,
     Ok(js_result.into())
 }
 
+#[wasm_bindgen]
+pub fn wasm_threshold_sign_round2(
+    signing_share_bytes: &[u8],
+    signing_nonces_bytes: &[u8],
+    signing_commitments_bytes_json: &[u8],
+    generation_output_bytes: &[u8],
+    payload_bytes: &[u8],
+    context: &str,
+) -> Result<Uint8Array, JsValue> {
+    // Parse signing share
+    let signing_share = SigningKeypair::from_bytes(&signing_share_bytes)
+        .map_err(|e| JsValue::from_str(&format!("Failed to parse signing share: {:?}", e)))?;
+
+    // Parse signing nonces
+    let signing_nonces = SigningNonces::from_bytes(&signing_nonces_bytes)
+        .map_err(|e| JsValue::from_str(&format!("Failed to parse signing nonces: {:?}", e)))?;
+
+    // Parse signing commitments from JSON
+    let signing_commitments_string = String::from_utf8(signing_commitments_bytes_json.to_vec())
+        .map_err(|_| JsValue::from_str("invalid UTF-8 in signing_commitments_bytes_json"))?;
+
+    let signing_commitments_bytes_vec: Vec<Vec<u8>> =
+        serde_json::from_str(&signing_commitments_string).map_err(|e| {
+            JsValue::from_str(&format!("Failed to deserialize signing commitments: {}", e))
+        })?;
+
+    let signing_commitments: Vec<SigningCommitments> = signing_commitments_bytes_vec
+        .iter()
+        .map(|sc_bytes| {
+            SigningCommitments::from_bytes(sc_bytes).map_err(|e| {
+                JsValue::from_str(&format!("Failed to parse SigningCommitments: {:?}", e))
+            })
+        })
+        .collect::<Result<_, _>>()?;
+
+    // Parse generation output (SPPOutputMessage)
+    let generation_output = SPPOutputMessage::from_bytes(&generation_output_bytes)
+        .map_err(|e| JsValue::from_str(&format!("Failed to parse generation output: {:?}", e)))?;
+
+    // Create signing package
+    let signing_package = signing_share
+        .sign(
+            context.as_bytes().to_vec(),
+            payload_bytes.to_vec(),
+            generation_output.spp_output(),
+            signing_commitments,
+            &signing_nonces,
+        )
+        .map_err(|e| JsValue::from_str(&format!("Failed to create signing package: {:?}", e)))?;
+
+    // Return signing package bytes
+    Ok(Uint8Array::from(signing_package.to_bytes().as_slice()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -255,5 +312,120 @@ mod tests {
             "Protocol completed with {} participants and threshold {}",
             participants, threshold
         );
+
+        // Test Round 1 signing
+        println!("\n=== TESTING ROUND 1 SIGNING ===");
+        let mut round1_outputs = Vec::new();
+
+        for (i, (_spp_output, signing_keypair)) in spp_outputs.iter().enumerate() {
+            println!("\n--- Round 1 for participant {} ---", i + 1);
+            let (signing_nonces, signing_commitments) = signing_keypair.commit();
+
+            // Serialize to bytes for testing (to_bytes() takes ownership)
+            let nonces_bytes = signing_nonces.to_bytes();
+            let commitments_bytes = signing_commitments.to_bytes();
+
+            println!("Nonces bytes length: {}", nonces_bytes.len());
+            println!("Commitments bytes length: {}", commitments_bytes.len());
+
+            // Test deserialization immediately
+            let parsed_nonces = SigningNonces::from_bytes(&nonces_bytes)
+                .expect(&format!("Failed to parse nonces for participant {}", i + 1));
+            let parsed_commitments = SigningCommitments::from_bytes(&commitments_bytes).expect(
+                &format!("Failed to parse commitments for participant {}", i + 1),
+            );
+
+            // Verify deserialization by comparing serialized output
+            let parsed_nonces_bytes = parsed_nonces.to_bytes();
+            let parsed_commitments_bytes = parsed_commitments.to_bytes();
+
+            assert_eq!(
+                nonces_bytes,
+                parsed_nonces_bytes,
+                "Nonces should serialize/deserialize correctly for participant {}",
+                i + 1
+            );
+            assert_eq!(
+                commitments_bytes,
+                parsed_commitments_bytes,
+                "Commitments should serialize/deserialize correctly for participant {}",
+                i + 1
+            );
+
+            // For round 2, we need the actual objects, so commit again
+            let (signing_nonces, signing_commitments) = signing_keypair.commit();
+            round1_outputs.push((signing_nonces, signing_commitments));
+        }
+
+        println!("Round 1 signing completed successfully for all participants!");
+
+        // Test Round 2 signing
+        println!("\n=== TESTING ROUND 2 SIGNING ===");
+
+        // Prepare test payload and context
+        let context = "test context for threshold signing";
+        let payload = b"test payload to sign with threshold signature";
+
+        // Collect all commitments for round 2
+        let all_commitments: Vec<SigningCommitments> = round1_outputs
+            .iter()
+            .map(|(_nonces, commitments)| commitments.clone())
+            .collect();
+
+        // Test round 2 signing for each participant
+        let mut round2_outputs = Vec::new();
+
+        for (i, ((spp_output, signing_keypair), (signing_nonces, _signing_commitments))) in
+            spp_outputs.iter().zip(round1_outputs.iter()).enumerate()
+        {
+            println!("\n--- Round 2 for participant {} ---", i + 1);
+
+            // Create signing package
+            let signing_package = signing_keypair
+                .sign(
+                    context.as_bytes().to_vec(),
+                    payload.to_vec(),
+                    spp_output.spp_output(),
+                    all_commitments.clone(),
+                    signing_nonces,
+                )
+                .expect(&format!(
+                    "Failed to create signing package for participant {}",
+                    i + 1
+                ));
+
+            let signing_package_bytes = signing_package.to_bytes();
+            println!(
+                "Signing package bytes length: {}",
+                signing_package_bytes.len()
+            );
+
+            round2_outputs.push(signing_package);
+        }
+
+        // Verify all participants produced signing packages
+        assert_eq!(
+            round2_outputs.len(),
+            participants as usize,
+            "All participants should produce signing packages"
+        );
+
+        // Verify signing packages are non-empty
+        for (i, signing_package) in round2_outputs.iter().enumerate() {
+            let bytes = signing_package.to_bytes();
+            assert!(
+                !bytes.is_empty(),
+                "Signing package for participant {} should not be empty",
+                i + 1
+            );
+            println!(
+                "Participant {} signing package size: {} bytes",
+                i + 1,
+                bytes.len()
+            );
+        }
+
+        println!("Round 2 signing completed successfully for all participants!");
+        println!("\n=== ALL TESTS PASSED ===");
     }
 }
