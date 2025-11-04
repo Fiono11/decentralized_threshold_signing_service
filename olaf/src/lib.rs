@@ -267,18 +267,30 @@ mod tests {
         const TEST_SECRET_KEY_2: [u8; 32] =
             hex!("db9ddbb3d6671c4de8248a4fba95f3d873dc21a0434b52951bb33730c1ac93d7");
 
-        // Create keypairs from the test secret keys using MiniSecretKey
+        // Create keypairs from the test secret keys using the same logic as wasm_keypair_from_secret
         let keypair1 = MiniSecretKey::from_bytes(&TEST_SECRET_KEY_1)
             .expect("Failed to create MiniSecretKey from test key 1")
             .expand_to_keypair(schnorrkel::ExpansionMode::Ed25519);
-
         let keypair2 = MiniSecretKey::from_bytes(&TEST_SECRET_KEY_2)
             .expect("Failed to create MiniSecretKey from test key 2")
             .expand_to_keypair(schnorrkel::ExpansionMode::Ed25519);
 
-        // For this test, we'll use the keypairs as both contributors and recipients
-        let contributors = vec![keypair1.clone(), keypair2.clone()];
-        let recipients = vec![keypair1.public, keypair2.public];
+        let keypair1_bytes = keypair1.to_bytes().to_vec();
+
+        // Extract public keys using the same logic as wasm_public_key_from_keypair
+        let public1_bytes = keypair1.public.to_bytes().to_vec();
+        let public2_bytes = keypair2.public.to_bytes().to_vec();
+
+        // Concatenate recipients (same format as WASM function expects)
+        let mut recipients_concat = Vec::new();
+        recipients_concat.extend_from_slice(&public1_bytes);
+        recipients_concat.extend_from_slice(&public2_bytes);
+
+        // Parse recipients (same logic as wasm_simplpedpop_contribute_all)
+        let recipients: Vec<PublicKey> = recipients_concat
+            .chunks(PUBLIC_KEY_LENGTH)
+            .map(|chunk| PublicKey::from_bytes(chunk).expect("Failed to parse public key"))
+            .collect();
 
         let threshold = 2u16;
         let participants = 2u16;
@@ -287,29 +299,57 @@ mod tests {
         println!("Threshold: {}", threshold);
         println!("Participants: {}", participants);
 
-        // Generate messages from contributors
-        let mut all_messages = Vec::new();
+        // Generate messages from contributors using the same logic as wasm_simplpedpop_contribute_all
+        let all_message1: AllMessage = keypair1
+            .simplpedpop_contribute_all(threshold, recipients.clone())
+            .expect("Failed to create message 1");
+        let all_message2: AllMessage = keypair2
+            .simplpedpop_contribute_all(threshold, recipients.clone())
+            .expect("Failed to create message 2");
 
-        for (i, contributor) in contributors.iter().enumerate() {
-            println!("\n--- Contributor {} ---", i + 1);
-            let message: AllMessage = contributor
-                .simplpedpop_contribute_all(threshold, recipients.clone())
-                .expect("Failed to create message");
+        let all_message1_bytes = all_message1.to_bytes();
+        let all_message2_bytes = all_message2.to_bytes();
 
-            let message_bytes = message.to_bytes();
-            println!("Message size: {} bytes", message_bytes.len());
+        println!("\n--- Contributor 1 ---");
+        println!("Message size: {} bytes", all_message1_bytes.len());
+        println!("\n--- Contributor 2 ---");
+        println!("Message size: {} bytes", all_message2_bytes.len());
 
-            all_messages.push(message);
-        }
+        // Prepare all messages (same format as WASM function: JSON array of byte arrays)
+        let all_messages_array = vec![all_message1_bytes.clone(), all_message2_bytes.clone()];
+        let all_messages_json =
+            serde_json::to_string(&all_messages_array).expect("Failed to serialize all_messages");
+        let all_messages_bytes = all_messages_json.into_bytes();
 
-        // Process messages as recipients
+        // Parse all messages from JSON (same logic as wasm_simplpedpop_recipient_all)
+        let all_messages_string =
+            String::from_utf8(all_messages_bytes.clone()).expect("Failed to convert to UTF-8");
+        let all_messages_bytes_vec: Vec<Vec<u8>> =
+            serde_json::from_str(&all_messages_string).expect("Failed to deserialize all_messages");
+        let all_messages: Vec<AllMessage> = all_messages_bytes_vec
+            .iter()
+            .map(|bytes| AllMessage::from_bytes(bytes).expect("Failed to parse AllMessage"))
+            .collect();
+
+        // Process messages as recipients using the same logic as wasm_simplpedpop_recipient_all
         let mut spp_outputs = Vec::new();
+        let mut signing_keypair_bytes_vec = Vec::new();
+        let mut spp_output_bytes_vec = Vec::new();
 
-        for (i, recipient) in contributors.iter().enumerate() {
+        for (i, keypair) in [&keypair1, &keypair2].iter().enumerate() {
             println!("\n--- Recipient {} processing ---", i + 1);
-            let (spp_output_message, signing_keypair) = recipient
+
+            // Use the same logic as wasm_simplpedpop_recipient_all
+            let (spp_output_message, signing_keypair) = keypair
                 .simplpedpop_recipient_all(&all_messages)
                 .expect("Failed to process messages");
+
+            let signing_keypair_bytes = signing_keypair.to_bytes().to_vec();
+            let spp_output_bytes = spp_output_message.to_bytes();
+
+            // Store bytes for later use
+            signing_keypair_bytes_vec.push(signing_keypair_bytes.clone());
+            spp_output_bytes_vec.push(spp_output_bytes.clone());
 
             spp_output_message
                 .verify_signature()
@@ -345,17 +385,29 @@ mod tests {
             participants, threshold
         );
 
-        // Test Round 1 signing
+        // Test Round 1 signing using the same logic as wasm_threshold_sign_round1
         println!("\n=== TESTING ROUND 1 SIGNING ===");
-        let mut round1_outputs = Vec::new();
+        let mut round1_nonces_bytes_vec = Vec::new();
+        let mut round1_commitments_bytes_vec = Vec::new();
 
-        for (i, (_spp_output, signing_keypair)) in spp_outputs.iter().enumerate() {
+        for (i, signing_keypair_bytes) in signing_keypair_bytes_vec.iter().enumerate() {
             println!("\n--- Round 1 for participant {} ---", i + 1);
-            let (signing_nonces, signing_commitments) = signing_keypair.commit();
 
-            // Serialize to bytes for testing (to_bytes() takes ownership)
+            // Use the same logic as wasm_threshold_sign_round1
+            let signing_share: SigningKeypair = SigningKeypair::from_bytes(signing_keypair_bytes)
+                .expect(&format!(
+                    "Failed to parse signing share for participant {}",
+                    i + 1
+                ));
+
+            let (signing_nonces, signing_commitments) = signing_share.commit();
+
+            // Serialize to bytes (same format as WASM function returns)
             let nonces_bytes = signing_nonces.to_bytes();
             let commitments_bytes = signing_commitments.to_bytes();
+
+            // Convert arrays to Vec for storing (same format as WASM function)
+            // to_bytes() returns a fixed-size array, convert to Vec<u8>
 
             println!("Nonces bytes length: {}", nonces_bytes.len());
             println!("Commitments bytes length: {}", commitments_bytes.len());
@@ -384,92 +436,141 @@ mod tests {
                 i + 1
             );
 
-            // For round 2, we need the actual objects, so commit again
-            let (signing_nonces, signing_commitments) = signing_keypair.commit();
-            round1_outputs.push((signing_nonces, signing_commitments));
+            // Store for round 2 (convert arrays to Vec<u8>)
+            round1_nonces_bytes_vec.push(nonces_bytes.as_slice().to_vec());
+            round1_commitments_bytes_vec.push(commitments_bytes.as_slice().to_vec());
         }
 
         println!("Round 1 signing completed successfully for all participants!");
 
-        // Test Round 2 signing
+        // Test Round 2 signing using the same logic as wasm_threshold_sign_round2
         println!("\n=== TESTING ROUND 2 SIGNING ===");
 
         // Prepare test payload and context
         let context = "test context for threshold signing";
         let payload = b"test payload to sign with threshold signature";
 
-        // Collect all commitments for round 2
-        let all_commitments: Vec<SigningCommitments> = round1_outputs
+        // Prepare all commitments (same format as WASM function: parse from JSON)
+        let all_commitments_json = serde_json::to_string(&round1_commitments_bytes_vec)
+            .expect("Failed to serialize commitments");
+        let all_commitments_string = String::from_utf8(all_commitments_json.into_bytes())
+            .expect("Failed to convert to UTF-8");
+        let all_commitments_bytes_vec: Vec<Vec<u8>> = serde_json::from_str(&all_commitments_string)
+            .expect("Failed to deserialize commitments");
+        let all_commitments: Vec<SigningCommitments> = all_commitments_bytes_vec
             .iter()
-            .map(|(_nonces, commitments)| commitments.clone())
+            .map(|bytes| {
+                SigningCommitments::from_bytes(bytes).expect("Failed to parse SigningCommitments")
+            })
             .collect();
 
         // Test round 2 signing for each participant
-        let mut round2_outputs = Vec::new();
+        let mut round2_outputs_bytes_vec = Vec::new();
 
-        for (i, ((spp_output, signing_keypair), (signing_nonces, _signing_commitments))) in
-            spp_outputs.iter().zip(round1_outputs.iter()).enumerate()
+        for (i, (signing_keypair_bytes, signing_nonces_bytes, spp_output_bytes)) in
+            signing_keypair_bytes_vec
+                .iter()
+                .zip(round1_nonces_bytes_vec.iter())
+                .zip(spp_output_bytes_vec.iter())
+                .map(|((a, b), c)| (a, b, c))
+                .enumerate()
         {
             println!("\n--- Round 2 for participant {} ---", i + 1);
 
+            // Use the same logic as wasm_threshold_sign_round2
+            let signing_share = SigningKeypair::from_bytes(signing_keypair_bytes).expect(&format!(
+                "Failed to parse signing share for participant {}",
+                i + 1
+            ));
+            let signing_nonces = SigningNonces::from_bytes(signing_nonces_bytes).expect(&format!(
+                "Failed to parse signing nonces for participant {}",
+                i + 1
+            ));
+            let generation_output =
+                SPPOutputMessage::from_bytes(spp_output_bytes).expect(&format!(
+                    "Failed to parse generation output for participant {}",
+                    i + 1
+                ));
+
             // Create signing package
-            let signing_package = signing_keypair
+            let signing_package = signing_share
                 .sign(
                     context.as_bytes().to_vec(),
                     payload.to_vec(),
-                    spp_output.spp_output(),
+                    generation_output.spp_output(),
                     all_commitments.clone(),
-                    signing_nonces,
+                    &signing_nonces,
                 )
                 .expect(&format!(
                     "Failed to create signing package for participant {}",
                     i + 1
                 ));
 
-            let signing_package_bytes = signing_package.to_bytes();
+            let signing_package_bytes = signing_package.to_bytes().as_slice().to_vec();
+
             println!(
                 "Signing package bytes length: {}",
                 signing_package_bytes.len()
             );
 
-            round2_outputs.push(signing_package);
+            round2_outputs_bytes_vec.push(signing_package_bytes);
         }
 
         // Verify all participants produced signing packages
         assert_eq!(
-            round2_outputs.len(),
+            round2_outputs_bytes_vec.len(),
             participants as usize,
             "All participants should produce signing packages"
         );
 
         // Verify signing packages are non-empty
-        for (i, signing_package) in round2_outputs.iter().enumerate() {
-            let bytes = signing_package.to_bytes();
+        for (i, signing_package_bytes) in round2_outputs_bytes_vec.iter().enumerate() {
             assert!(
-                !bytes.is_empty(),
+                !signing_package_bytes.is_empty(),
                 "Signing package for participant {} should not be empty",
                 i + 1
             );
             println!(
                 "Participant {} signing package size: {} bytes",
                 i + 1,
-                bytes.len()
+                signing_package_bytes.len()
             );
         }
 
         println!("Round 2 signing completed successfully for all participants!");
 
-        // Test signature aggregation
+        // Test signature aggregation using the same logic as wasm_aggregate_threshold_signature
         println!("\n=== TESTING SIGNATURE AGGREGATION ===");
+
+        // Prepare signing packages (same format as WASM function: parse from JSON)
+        let signing_packages_json = serde_json::to_string(&round2_outputs_bytes_vec)
+            .expect("Failed to serialize signing packages");
+        let signing_packages_string = String::from_utf8(signing_packages_json.into_bytes())
+            .expect("Failed to convert to UTF-8");
+        let signing_packages_bytes_vec: Vec<Vec<u8>> =
+            serde_json::from_str(&signing_packages_string)
+                .expect("Failed to deserialize signing packages");
+        let signing_packages: Vec<SigningPackage> = signing_packages_bytes_vec
+            .iter()
+            .map(|bytes| SigningPackage::from_bytes(bytes).expect("Failed to parse SigningPackage"))
+            .collect();
 
         // Aggregate all signing packages into a final signature
         let final_signature =
-            aggregate(&round2_outputs).expect("Failed to aggregate threshold signature");
+            aggregate(&signing_packages).expect("Failed to aggregate threshold signature");
+        let signature_bytes = final_signature.to_bytes().as_slice().to_vec();
 
         println!(
             "Aggregated signature bytes length: {}",
-            final_signature.to_bytes().len()
+            signature_bytes.len()
         );
+        println!("Signature: {:?}", signature_bytes);
+        // Print signature in hex format for comparison with JavaScript test
+        let signature_hex: String = signature_bytes
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect();
+        println!("Signature (hex): {}", signature_hex);
 
         // Verify the aggregated signature with the threshold public key
         let verification_result =
@@ -485,17 +586,16 @@ mod tests {
         println!("✓ Aggregated signature verified successfully!");
 
         // Test round-trip serialization of signature
-        let signature_bytes = final_signature.to_bytes();
         println!("Signature serialization: {} bytes", signature_bytes.len());
         assert!(!signature_bytes.is_empty(), "Signature should not be empty");
 
         // Test that aggregating the same signing packages produces the same signature
-        let final_signature_2 = aggregate(&round2_outputs)
+        let final_signature_2 = aggregate(&signing_packages)
             .expect("Failed to aggregate threshold signature on second attempt");
+        let signature_bytes_2 = final_signature_2.to_bytes().as_slice().to_vec();
 
         assert_eq!(
-            final_signature.to_bytes(),
-            final_signature_2.to_bytes(),
+            signature_bytes, signature_bytes_2,
             "Aggregating the same signing packages should produce the same signature"
         );
 
@@ -503,15 +603,15 @@ mod tests {
 
         // Test that all signature shares are required
         assert_eq!(
-            round2_outputs.len(),
+            round2_outputs_bytes_vec.len(),
             threshold as usize,
             "We should have exactly threshold signature shares"
         );
 
         // Test signature aggregation with fewer shares should fail
         if threshold > 1 {
-            let insufficient_shares = &round2_outputs[..threshold as usize - 1];
-            let aggregation_result = aggregate(insufficient_shares);
+            let insufficient_shares_packages = &signing_packages[..threshold as usize - 1];
+            let aggregation_result = aggregate(insufficient_shares_packages);
             assert!(
                 aggregation_result.is_err(),
                 "Aggregating with fewer than threshold shares should fail"
