@@ -5,3 +5,4 @@ target/
 playwright-report/
 olaf/target/
 olaf/pkg/
+test/threshold-keys-cache.json
