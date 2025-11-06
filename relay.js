@@ -1,5 +1,17 @@
 // LibP2P Relay Server with Key-Value Storage
 
+// Polyfill for Promise.withResolvers() for Node.js < 22
+if (!Promise.withResolvers) {
+  Promise.withResolvers = function () {
+    let resolve, reject
+    const promise = new Promise((res, rej) => {
+      resolve = res
+      reject = rej
+    })
+    return { promise, resolve, reject }
+  }
+}
+
 import { noise } from '@chainsafe/libp2p-noise'
 import { yamux } from '@chainsafe/libp2p-yamux'
 import { circuitRelayServer } from '@libp2p/circuit-relay-v2'
