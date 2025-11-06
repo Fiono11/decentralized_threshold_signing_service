@@ -83,15 +83,18 @@ This milestone establishes the foundational networking layer where two browsers 
 - ✅ Comprehensive automated tests using Playwright
 - ✅ Inline documentation and testing guide
 
-### 🚧 Milestone 2: Distributed Key Generation (PLANNED)
+### ✅ Milestone 2: Distributed Key Generation (COMPLETED)
 
-Two browsers will exchange messages and successfully produce a shared threshold public key using the Olaf DKG protocol compiled to WASM.
+Two browsers can exchange messages and successfully produce a shared threshold public key using the Olaf DKG protocol compiled to WASM.
 
-**Planned Deliverables**:
-- Rust to WebAssembly compilation of Olaf DKG protocol
-- Integration of DKG protocol with browser client
-- Shared threshold public key generation
-- Browser-local storage for key shares and protocol state
+#### Completed Features:
+- ✅ Rust to WebAssembly compilation of Olaf DKG protocol (SimplPedPoP)
+- ✅ Integration of DKG protocol with browser client
+- ✅ Shared threshold public key generation via AllMessage exchange
+- ✅ WASM functions for AllMessage generation and threshold key processing
+- ✅ Peer-to-peer AllMessage exchange via WebRTC
+- ✅ Threshold public key generation and verification
+- ✅ Comprehensive documentation and step-by-step guide
 
 ### 🚧 Milestone 3: Threshold Signature (PLANNED)
 
@@ -228,6 +231,84 @@ docker compose up -d
 6. **Shutdown the relay server:**
    - `Ctrl+C` in the relay server terminal (non Docker) or `docker compose stop relay-server` 
    - Verify that both peers maintain their direct WebRTC connection
+
+### Threshold Key Generation Steps
+
+After establishing a peer-to-peer connection, each peer can participate in the distributed key generation (DKG) process to generate a shared threshold public key. The following steps must be performed by **each peer** in the threshold signing group:
+
+#### Prerequisites
+
+Before starting the threshold key generation process, ensure that:
+- Both peers are connected to the relay server
+- Both peers have registered their SS58 addresses with proof of possession
+- Both peers have established a direct WebRTC connection with each other (see steps 1-5 above)
+
+#### Step-by-Step Process
+
+**For Peer 1 (First Browser - `http://localhost:5173`):**
+
+1. **Generate AllMessage:**
+   - In the "Threshold Signing (SimplPedPoP)" section, enter your secret key in the "Secret Key" field (e.g., `0x473a77675b8e77d90c1b6dc2dbe6ac533b0853790ea8bcadf0ee8b5da4cfbbce`)
+   - In the "Recipients" field, enter the SS58 addresses of **all participants** (including yourself), separated by commas (e.g., `5CXkZyy4S5b3w16wvKA2hUwzp5q2y7UtRPkXnW97QGvDN8Jw,5Gma8SNsn6rkQf9reAWFQ9WKq8bwwHtSzwMYtLTdhYsGPKiy`)
+   - Enter the threshold value (e.g., `2` for a 2-of-2 threshold)
+   - Click "Generate AllMessage"
+   - Verify you see: "✓ AllMessage generated successfully"
+   - The AllMessage will be displayed in hex format below the button
+
+2. **Send AllMessage to Peer 2:**
+   - Click "Send AllMessage to Connected Peer"
+   - Verify you see: "✓ AllMessage sent successfully to connected peer"
+   - The AllMessage is now sent to Peer 2 via the WebRTC connection
+
+3. **Receive AllMessage from Peer 2:**
+   - Wait for Peer 2 to send their AllMessage
+   - Verify you see: "✓ AllMessage received and stored" in the output log
+
+4. **Process AllMessages to Generate Threshold Key:**
+   - Once you have both your generated AllMessage and the received AllMessage from Peer 2, click "Process AllMessages (Generate Threshold Key)"
+   - Verify you see: "✓ Threshold key generated successfully"
+   - The threshold public key will be displayed in SS58 format in the UI
+   - Both peers should generate the **same** threshold public key
+
+**For Peer 2 (Second Browser - `http://localhost:5174`):**
+
+1. **Generate AllMessage:**
+   - In the "Threshold Signing (SimplPedPoP)" section, enter your secret key in the "Secret Key" field (e.g., `0xdb9ddbb3d6671c4de8248a4fba95f3d873dc21a0434b52951bb33730c1ac93d7`)
+   - In the "Recipients" field, enter the SS58 addresses of **all participants** (including yourself), separated by commas (e.g., `5CXkZyy4S5b3w16wvKA2hUwzp5q2y7UtRPkXnW97QGvDN8Jw,5Gma8SNsn6rkQf9reAWFQ9WKq8bwwHtSzwMYtLTdhYsGPKiy`)
+   - Enter the threshold value (e.g., `2` for a 2-of-2 threshold)
+   - **Important:** The threshold value and recipient list must be **identical** for all peers
+   - Click "Generate AllMessage"
+   - Verify you see: "✓ AllMessage generated successfully"
+
+2. **Send AllMessage to Peer 1:**
+   - Click "Send AllMessage to Connected Peer"
+   - Verify you see: "✓ AllMessage sent successfully to connected peer"
+
+3. **Receive AllMessage from Peer 1:**
+   - Wait for Peer 1 to send their AllMessage
+   - Verify you see: "✓ AllMessage received and stored" in the output log
+
+4. **Process AllMessages to Generate Threshold Key:**
+   - Once you have both your generated AllMessage and the received AllMessage from Peer 1, click "Process AllMessages (Generate Threshold Key)"
+   - Verify you see: "✓ Threshold key generated successfully"
+   - The threshold public key will be displayed in SS58 format in the UI
+   - **Verify that the threshold public key matches the one generated by Peer 1**
+
+#### Important Notes
+
+- **Recipient List Consistency:** All peers must use the **exact same** recipient list (same SS58 addresses in the same order) when generating their AllMessages. The recipient list should include all participants in the threshold signing group.
+
+- **Threshold Value:** All peers must use the **same threshold value**. For example, if you have 2 participants and want a 2-of-2 threshold, both peers must enter `2`.
+
+- **AllMessage Exchange:** Each peer must send their AllMessage to all other peers and receive AllMessages from all other peers before processing. The order of sending/receiving does not matter, but all AllMessages must be collected before processing.
+
+- **Threshold Key Verification:** After processing, all peers should generate the **identical** threshold public key. If the keys differ, verify that:
+  - All peers used the same recipient list
+  - All peers used the same threshold value
+  - All AllMessages were correctly exchanged
+  - All secret keys correspond to the SS58 addresses in the recipient list
+
+- **Key Storage:** The generated threshold public key, SPP output message, and signing keypair are stored in browser memory and can be used for subsequent threshold signing operations.
 
 ### Cleanup
 
