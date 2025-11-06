@@ -224,21 +224,10 @@ docker compose up -d
 5. **Autenticate the connection:**
    - Verify you see the message "Mutual connection proof of possession completed!" or "Mutual connection challenge verified - connection established!"
    - Both browser windows should show the peer connection in "Active Connections"
-   - The "Message" section should now be visible in both windows
 
-6. **Send a message from the first browser:**
-   - In the first browser window, type a message in the "Message" field
-   - Click "Send"
-   - Verify the message is received in the second browser window
-
-7. **Send a message from the second browser:**
-   - In the second browser window, type a different message
-   - Click "Send"
-   - Verify the message is received in first browser window
-
-8. **Shutdown the relay server:**
+6. **Shutdown the relay server:**
    - `Ctrl+C` in the relay server terminal (non Docker) or `docker compose stop relay-server` 
-   - Verify that both peers are still able to exchange messages
+   - Verify that both peers maintain their direct WebRTC connection
 
 ### Cleanup
 

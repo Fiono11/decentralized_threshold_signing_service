@@ -32,7 +32,6 @@ const CHAT_STREAM_TIMEOUT = 5000
 
 // DOM Elements
 const output = document.getElementById('output')
-const sendSection = document.getElementById('send-section')
 
 // WASM Threshold Signing State
 let generatedAllMessage = null
@@ -646,7 +645,6 @@ const setupProtocolHandlers = () => {
         break // End of stream
       }
       const message = toString(buffer.subarray())
-      appendOutput(`Received: '${message}'`)
 
       // Check if this is an AllMessage
       if (message.startsWith('ALL_MESSAGE:')) {
@@ -750,7 +748,6 @@ const updateConnList = () => {
   const connectionElements = node.getConnections().map((connection) => {
     if (WebRTC.matches(connection.remoteAddr)) {
       sessionState.peerMultiaddr = connection.remoteAddr
-      sendSection.style.display = 'block'
     }
     const element = document.createElement('li')
     element.textContent = connection.remoteAddr.toString()
@@ -790,7 +787,6 @@ const handleChatStream = async () => {
             break // End of stream
           }
           const message = toString(buffer.subarray())
-          appendOutput(`Received: '${message}'`)
 
           // Check if this is an AllMessage
           if (message.startsWith('ALL_MESSAGE:')) {
@@ -823,15 +819,6 @@ const sendMessage = async (message) => {
   } catch (error) {
     appendOutput(`Send error: ${error.message}`)
   }
-}
-
-// Send Button Handler
-window.send.onclick = async () => {
-  const streamReady = await handleChatStream()
-  if (!streamReady) return
-
-  const message = window.message.value.toString().trim()
-  await sendMessage(message)
 }
 
 // Proof of Possession Functions
@@ -1233,7 +1220,7 @@ window['connect-via-address'].onclick = async () => {
 const initializeWasm = async () => {
   try {
     await initOlaf()
-    
+
     // Expose WASM functions globally for testing
     window.wasm_simplpedpop_contribute_all = wasm_simplpedpop_contribute_all
     window.wasm_keypair_from_secret = wasm_keypair_from_secret
