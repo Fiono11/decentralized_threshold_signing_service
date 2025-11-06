@@ -8,7 +8,7 @@ edition = "2024"
 crate-type = ["rlib", "cdylib"]
 
 [dependencies]
-schnorrkel = { path = "../../schnorrkel" }
+schnorrkel = { git = "https://github.com/Fiono11/schnorrkel" }
 wasm-bindgen = { version = "0.2.104" }
 js-sys = { version = "0.3.81" }
 bs58 = { version = "0.5.1", default-features = false, features = ["alloc"] }
