@@ -399,6 +399,7 @@ checksum = "28d3b2b1366ec20994f1fd18c3c594f05c5dd4bc44d8bb0c1c632c8d6829481f"
 [[package]]
 name = "schnorrkel"
 version = "0.11.4"
+source = "git+https://github.com/Fiono11/schnorrkel#ea0593ffecc85f8a91f15d7e406bb480b41e9e7d"
 dependencies = [
  "aead",
  "arrayref",
