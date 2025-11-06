@@ -1399,9 +1399,9 @@ test.describe('Polkadot API Integration with Threshold Signing:', () => {
       signingKeypair2
     }) => {
       // Import Polkadot API from CDN (works in browser context)
-      const { ApiPromise, WsProvider } = await import('https://cdn.jsdelivr.net/npm/@polkadot/api@latest/+esm')
-      const { hexToU8a, u8aToHex } = await import('https://cdn.jsdelivr.net/npm/@polkadot/util@latest/+esm')
-      const { sr25519Verify } = await import('https://cdn.jsdelivr.net/npm/@polkadot/util-crypto@latest/+esm')
+      const { ApiPromise, WsProvider } = await import('https://esm.sh/@polkadot/api@latest')
+      const { hexToU8a, u8aToHex } = await import('https://esm.sh/@polkadot/util@latest')
+      const { sr25519Verify } = await import('https://esm.sh/@polkadot/util-crypto@latest')
 
       // 1. Connect to Westend Relay Chain
       // Note: Westend has multiple chains (relay, assethub, collectives, bridgehub, people, coretime)
