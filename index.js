@@ -1510,13 +1510,13 @@ window['process-all-messages'].onclick = async () => {
     thresholdKeyOutput.style.borderRadius = '5px'
     thresholdKeyOutput.style.fontFamily = 'monospace'
     thresholdKeyOutput.style.wordBreak = 'break-all'
+
+    // Convert threshold key to SS58 address
+    const thresholdKeySS58 = encodeAddress(thresholdKey)
+
     thresholdKeyOutput.innerHTML = `
       <h4>🔐 Generated Threshold Public Key</h4>
-      <p><strong>Threshold Key Size:</strong> ${thresholdKey.length} bytes</p>
-      <p><strong>SPP Output Message Size:</strong> ${sppOutputMessage.length} bytes</p>
-      <p><strong>Signing Keypair Size:</strong> ${signingKeypair.length} bytes</p>
-      <p><strong>Threshold Key Hex:</strong> ${thresholdKeyHex}</p>
-      <p><strong>First 16 bytes:</strong> ${Array.from(thresholdKey.slice(0, 16)).map(b => b.toString(16).padStart(2, '0')).join(' ')}</p>
+      <p><strong>Threshold Key:</strong> ${thresholdKeySS58}</p>
     `
 
     // Find the threshold signing section and append the result
