@@ -69,6 +69,396 @@ class SessionState {
 let sessionState = new SessionState()
 let cryptoReady = false
 
+// General Helpers
+const HEX_PATTERN = /^0x[0-9a-fA-F]+$/
+const HEX_NO_PREFIX_PATTERN = /^[0-9a-fA-F]+$/
+
+const toHexString = (value, { withPrefix = false } = {}) => {
+  const uint8 = value instanceof Uint8Array ? value : Uint8Array.from(value)
+  const hex = Array.from(uint8).map((b) => b.toString(16).padStart(2, '0')).join('')
+  return withPrefix ? `0x${hex}` : hex
+}
+
+const normalizeHexString = (value) => {
+  if (typeof value !== 'string') {
+    return null
+  }
+  if (HEX_PATTERN.test(value)) {
+    return value
+  }
+  if (HEX_NO_PREFIX_PATTERN.test(value)) {
+    return `0x${value}`
+  }
+  return null
+}
+
+const toUint8ArrayNormalized = (value, label = 'value') => {
+  if (value instanceof Uint8Array) {
+    return value
+  }
+
+  if (Array.isArray(value)) {
+    return Uint8Array.from(value)
+  }
+
+  if (typeof value === 'string') {
+    const normalizedHex = normalizeHexString(value)
+    if (normalizedHex) {
+      return hexToU8a(normalizedHex)
+    }
+  }
+
+  throw new Error(`Unsupported ${label} type: ${typeof value}`)
+}
+
+const toPayloadUint8Array = (value, label = 'payload') => {
+  if (value instanceof Uint8Array) {
+    return value
+  }
+
+  if (Array.isArray(value)) {
+    return Uint8Array.from(value)
+  }
+
+  if (typeof value === 'string') {
+    const normalizedHex = normalizeHexString(value)
+    if (normalizedHex) {
+      return hexToU8a(normalizedHex)
+    }
+    return new TextEncoder().encode(value)
+  }
+
+  throw new Error(`Unsupported ${label} type: ${typeof value}`)
+}
+
+const serializeByteArrays = (value, label = 'value') => {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new Error(`${label} must be a non-empty array`)
+  }
+
+  const normalized = value.map((entry, index) => Array.from(toUint8ArrayNormalized(entry, `${label}[${index}]`)))
+  const json = JSON.stringify(normalized)
+  return {
+    normalized,
+    json,
+    bytes: new TextEncoder().encode(json)
+  }
+}
+
+const ensureThreshold = (threshold) => {
+  const parsed = typeof threshold === 'number' ? threshold : parseInt(threshold, 10)
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    throw new Error(`Threshold must be a positive integer. Received: ${threshold}`)
+  }
+  return parsed
+}
+
+const normalizeSs58Recipients = (recipients) => {
+  if (!Array.isArray(recipients) || recipients.length === 0) {
+    throw new Error('Recipients must be a non-empty array of SS58 addresses')
+  }
+  return recipients.map((recipient, index) => {
+    if (typeof recipient !== 'string') {
+      throw new Error(`Recipient at index ${index} must be a string`)
+    }
+    validatePolkadotAddress(recipient)
+    return recipient
+  })
+}
+
+const concatRecipientPublicKeys = (recipients) => {
+  const publicKeyBytes = recipients.map((recipient) => window.ss58ToPublicKeyBytes(recipient))
+  const totalLength = publicKeyBytes.reduce((sum, bytes) => sum + bytes.length, 0)
+  const concatenated = new Uint8Array(totalLength)
+  let offset = 0
+  for (const bytes of publicKeyBytes) {
+    concatenated.set(bytes, offset)
+    offset += bytes.length
+  }
+  return { concatenated, publicKeyBytes }
+}
+
+const parseSigningJson = (jsonString, label) => {
+  const parsed = JSON.parse(jsonString)
+  if (!Array.isArray(parsed)) {
+    throw new Error(`${label} response must be an array`)
+  }
+
+  const isNested = parsed.length > 0 && parsed.every((item) => Array.isArray(item))
+
+  if (isNested) {
+    const byteArrays = parsed.map((item, index) => {
+      if (!Array.isArray(item) || !item.every((value) => typeof value === 'number')) {
+        throw new Error(`${label}[${index}] must be an array of numbers`)
+      }
+      return {
+        array: item,
+        bytes: Uint8Array.from(item),
+        hex: toHexString(item)
+      }
+    })
+    return {
+      isNested: true,
+      arrays: parsed,
+      byteArrays,
+      bytes: byteArrays.map((entry) => entry.bytes),
+      hex: byteArrays.map((entry) => entry.hex)
+    }
+  }
+
+  if (!parsed.every((value) => typeof value === 'number')) {
+    throw new Error(`${label} must contain numeric byte values`)
+  }
+
+  const bytes = Uint8Array.from(parsed)
+  return {
+    isNested: false,
+    arrays: parsed,
+    bytes,
+    hex: toHexString(bytes)
+  }
+}
+
+const createThresholdSigningApi = () => {
+  const textEncoder = new TextEncoder()
+
+  const ensureSecretKeyHex = (secretKey) => {
+    if (secretKey instanceof Uint8Array || Array.isArray(secretKey)) {
+      return toHexString(secretKey, { withPrefix: true })
+    }
+
+    if (typeof secretKey === 'string') {
+      const normalized = normalizeHexString(secretKey)
+      if (!normalized) {
+        throw new Error('Secret key must be a hex string (with or without 0x prefix) or Uint8Array')
+      }
+      return normalized
+    }
+
+    throw new Error('Unsupported secret key format')
+  }
+
+  const generateAllMessage = ({ secretKey, recipients, threshold }) => {
+    const normalizedSecretKeyHex = ensureSecretKeyHex(secretKey)
+    const keypairBytes = window.createKeypairBytes(normalizedSecretKeyHex)
+    const normalizedRecipients = normalizeSs58Recipients(recipients)
+    const { concatenated, publicKeyBytes } = concatRecipientPublicKeys(normalizedRecipients)
+    const normalizedThreshold = ensureThreshold(threshold)
+
+    const allMessage = window.wasm_simplpedpop_contribute_all(
+      keypairBytes,
+      normalizedThreshold,
+      concatenated
+    )
+
+    return {
+      allMessage,
+      allMessageArray: Array.from(allMessage),
+      allMessageHex: toHexString(allMessage),
+      keypairBytes,
+      secretKeyHex: normalizedSecretKeyHex,
+      recipients: normalizedRecipients,
+      recipientsPublicKeyBytes: publicKeyBytes,
+      recipientsConcat: concatenated,
+      threshold: normalizedThreshold
+    }
+  }
+
+  const processAllMessages = ({ secretKey, allMessages }) => {
+    const normalizedSecretKeyHex = ensureSecretKeyHex(secretKey)
+    const keypairBytes = window.createKeypairBytes(normalizedSecretKeyHex)
+
+    const { normalized, json, bytes } = serializeByteArrays(allMessages, 'allMessages')
+
+    const result = window.wasm_simplpedpop_recipient_all(keypairBytes, bytes)
+
+    const thresholdPublicKey = result.threshold_public_key
+    const sppOutputMessage = result.spp_output_message
+    const signingKeypair = result.signing_keypair
+
+    return {
+      thresholdPublicKey,
+      thresholdPublicKeyArray: Array.from(thresholdPublicKey),
+      thresholdPublicKeyHex: toHexString(thresholdPublicKey),
+      thresholdPublicKeySS58: encodeAddress(thresholdPublicKey),
+      sppOutputMessage,
+      sppOutputMessageArray: Array.from(sppOutputMessage),
+      sppOutputMessageHex: toHexString(sppOutputMessage),
+      signingKeypair,
+      signingKeypairArray: Array.from(signingKeypair),
+      signingKeypairHex: toHexString(signingKeypair),
+      secretKeyHex: normalizedSecretKeyHex,
+      allMessagesJson: json,
+      allMessagesNormalized: normalized
+    }
+  }
+
+  const runRound1 = ({ signingKeypair }) => {
+    const signingKeypairBytes = toUint8ArrayNormalized(signingKeypair, 'signingKeypair')
+    const round1Result = window.wasm_threshold_sign_round1(signingKeypairBytes)
+
+    const nonces = parseSigningJson(round1Result.signing_nonces, 'signing_nonces')
+    const commitments = parseSigningJson(round1Result.signing_commitments, 'signing_commitments')
+
+    return {
+      signingNoncesJson: round1Result.signing_nonces,
+      signingCommitmentsJson: round1Result.signing_commitments,
+      signingNoncesArray: nonces.arrays,
+      signingCommitmentsArray: commitments.arrays,
+      signingNoncesBytes: nonces.bytes,
+      signingCommitmentsBytes: commitments.bytes,
+      signingNoncesHex: nonces.hex,
+      signingCommitmentsHex: commitments.hex,
+      signingNoncesIsNested: nonces.isNested,
+      signingCommitmentsIsNested: commitments.isNested
+    }
+  }
+
+  const normalizeCommitments = (commitments) => {
+    if (typeof commitments === 'string') {
+      return {
+        json: commitments,
+        bytes: textEncoder.encode(commitments),
+        normalized: JSON.parse(commitments)
+      }
+    }
+
+    const { json, bytes, normalized } = serializeByteArrays(commitments, 'commitments')
+    return { json, bytes, normalized }
+  }
+
+  const runRound2 = ({
+    signingKeypair,
+    signingNonces,
+    commitments,
+    sppOutputMessage,
+    payload,
+    context = 'substrate'
+  }) => {
+    const signingKeypairBytes = toUint8ArrayNormalized(signingKeypair, 'signingKeypair')
+    const noncesBytes = toUint8ArrayNormalized(signingNonces, 'signingNonces')
+    const { bytes: commitmentsBytes, json: commitmentsJson, normalized: normalizedCommitments } = normalizeCommitments(commitments)
+    const sppOutputMessageBytes = toUint8ArrayNormalized(sppOutputMessage, 'sppOutputMessage')
+    const payloadBytes = toPayloadUint8Array(payload)
+
+    const signingPackage = window.wasm_threshold_sign_round2(
+      signingKeypairBytes,
+      noncesBytes,
+      commitmentsBytes,
+      sppOutputMessageBytes,
+      payloadBytes,
+      context
+    )
+
+    return {
+      signingPackage,
+      signingPackageArray: Array.from(signingPackage),
+      signingPackageHex: toHexString(signingPackage),
+      commitmentsJson,
+      commitmentsNormalized: normalizedCommitments,
+      payloadBytes,
+      context
+    }
+  }
+
+  const aggregateSignatures = ({ signingPackages }) => {
+    const { bytes, normalized, json } = serializeByteArrays(signingPackages, 'signingPackages')
+    const aggregatedSignature = window.wasm_aggregate_threshold_signature(bytes)
+
+    return {
+      aggregatedSignature,
+      aggregatedSignatureArray: Array.from(aggregatedSignature),
+      aggregatedSignatureHex: toHexString(aggregatedSignature),
+      signingPackagesJson: json,
+      signingPackagesNormalized: normalized
+    }
+  }
+
+  const verifySignature = async ({ message, signature, publicKey, context = '' }) => {
+    await initializeCrypto()
+
+    const signatureBytes = toUint8ArrayNormalized(signature, 'signature')
+    const publicKeyBytes = toUint8ArrayNormalized(publicKey, 'publicKey')
+    const payloadBytes = toPayloadUint8Array(message, 'message')
+
+    if (context && typeof context !== 'string') {
+      throw new Error('Context must be a string when provided')
+    }
+
+    if (context) {
+      const contextBytes = textEncoder.encode(context)
+      const combined = new Uint8Array(contextBytes.length + payloadBytes.length)
+      combined.set(contextBytes, 0)
+      combined.set(payloadBytes, contextBytes.length)
+      return sr25519Verify(combined, signatureBytes, publicKeyBytes)
+    }
+
+    return sr25519Verify(payloadBytes, signatureBytes, publicKeyBytes)
+  }
+
+  return {
+    generateAllMessage,
+    processAllMessages,
+    runRound1,
+    runRound2,
+    aggregateSignatures,
+    verifySignature,
+    utils: {
+      toUint8Array: toUint8ArrayNormalized,
+      toHexString,
+      serializeByteArrays
+    }
+  }
+}
+
+const updatePeerRound1CommitmentsStatus = () => {
+  const statusElement = document.getElementById('round1-commitments-status')
+  if (!statusElement) return
+
+  if (receivedRound1Commitments.length === 0) {
+    statusElement.textContent = 'No peer commitments loaded.'
+    statusElement.style.color = '#555'
+  } else {
+    statusElement.textContent = `Loaded ${receivedRound1Commitments.length} commitment set(s).`
+    statusElement.style.color = '#2f855a'
+  }
+}
+
+const updatePeerSigningPackagesStatus = () => {
+  const statusElement = document.getElementById('signing-packages-status')
+  if (!statusElement) return
+
+  if (receivedSigningPackages.length === 0) {
+    statusElement.textContent = 'No peer signing packages loaded.'
+    statusElement.style.color = '#555'
+  } else {
+    statusElement.textContent = `Loaded ${receivedSigningPackages.length} signing package(s).`
+    statusElement.style.color = '#2f855a'
+  }
+}
+
+const parsePeerByteArraysInput = (rawInput, label) => {
+  let parsed
+  try {
+    parsed = JSON.parse(rawInput)
+  } catch (error) {
+    throw new Error(`${label} must be valid JSON: ${error.message}`)
+  }
+
+  if (!Array.isArray(parsed) || parsed.length === 0) {
+    throw new Error(`${label} must be a non-empty JSON array`)
+  }
+
+  return parsed.map((entry, index) => {
+    try {
+      const bytes = toUint8ArrayNormalized(entry, `${label}[${index}]`)
+      return Array.from(bytes)
+    } catch (error) {
+      throw new Error(`${label}[${index}]: ${error.message}`)
+    }
+  })
+}
+
 // Utility Functions
 const appendOutput = (message) => {
   const div = document.createElement('div')
@@ -671,6 +1061,12 @@ const setupProtocolHandlers = () => {
           receivedRound1Commitments.push(commitmentsArray)
           appendOutput(`✓ Round 1 commitments received and stored: ${commitmentsArray.length} bytes`)
           appendOutput(`✓ Total received commitments: ${receivedRound1Commitments.length}`)
+          window.thresholdSigningState.peerCommitments = receivedRound1Commitments.map(entry => [...entry])
+          const peerCommitmentsTextarea = document.getElementById('peer-round1-commitments')
+          if (peerCommitmentsTextarea) {
+            peerCommitmentsTextarea.value = JSON.stringify(receivedRound1Commitments, null, 2)
+          }
+          updatePeerRound1CommitmentsStatus()
         } catch (err) {
           appendOutput(`Error parsing received commitments: ${err.message}`)
         }
@@ -684,6 +1080,12 @@ const setupProtocolHandlers = () => {
           receivedSigningPackages.push(packageArray)
           appendOutput(`✓ Signing package received and stored: ${packageArray.length} bytes`)
           appendOutput(`✓ Total received signing packages: ${receivedSigningPackages.length}`)
+          window.thresholdSigningState.peerSigningPackages = receivedSigningPackages.map(entry => [...entry])
+          const peerPackagesTextarea = document.getElementById('peer-signing-packages')
+          if (peerPackagesTextarea) {
+            peerPackagesTextarea.value = JSON.stringify(receivedSigningPackages, null, 2)
+          }
+          updatePeerSigningPackagesStatus()
         } catch (err) {
           appendOutput(`Error parsing received signing package: ${err.message}`)
         }
@@ -840,6 +1242,12 @@ const handleChatStream = async () => {
               receivedRound1Commitments.push(commitmentsArray)
               appendOutput(`✓ Round 1 commitments received and stored: ${commitmentsArray.length} bytes`)
               appendOutput(`✓ Total received commitments: ${receivedRound1Commitments.length}`)
+              window.thresholdSigningState.peerCommitments = receivedRound1Commitments.map(entry => [...entry])
+              const peerCommitmentsTextarea = document.getElementById('peer-round1-commitments')
+              if (peerCommitmentsTextarea) {
+                peerCommitmentsTextarea.value = JSON.stringify(receivedRound1Commitments, null, 2)
+              }
+              updatePeerRound1CommitmentsStatus()
             } catch (err) {
               appendOutput(`Error parsing received commitments: ${err.message}`)
             }
@@ -853,6 +1261,12 @@ const handleChatStream = async () => {
               receivedSigningPackages.push(packageArray)
               appendOutput(`✓ Signing package received and stored: ${packageArray.length} bytes`)
               appendOutput(`✓ Total received signing packages: ${receivedSigningPackages.length}`)
+              window.thresholdSigningState.peerSigningPackages = receivedSigningPackages.map(entry => [...entry])
+              const peerPackagesTextarea = document.getElementById('peer-signing-packages')
+              if (peerPackagesTextarea) {
+                peerPackagesTextarea.value = JSON.stringify(receivedSigningPackages, null, 2)
+              }
+              updatePeerSigningPackagesStatus()
             } catch (err) {
               appendOutput(`Error parsing received signing package: ${err.message}`)
             }
@@ -1316,6 +1730,20 @@ const initializeWasm = async () => {
       return window.wasm_keypair_from_secret(secretKeyBytes)
     }
 
+    window.thresholdSigning = createThresholdSigningApi()
+    window.thresholdSigningState = {
+      lastGeneratedAllMessage: null,
+      lastProcessedThreshold: null,
+      lastRound1: null,
+      lastRound2: null,
+      lastAggregatedSignature: null,
+      peerCommitments: [],
+      peerSigningPackages: []
+    }
+
+    updatePeerRound1CommitmentsStatus()
+    updatePeerSigningPackagesStatus()
+
     appendOutput('WASM module initialized successfully')
   } catch (error) {
     appendOutput(`Failed to initialize WASM: ${error.message}`)
@@ -1386,65 +1814,32 @@ window['generate-all-message'].onclick = async () => {
     appendOutput(`Secret key: ${secretKeyInput}`)
     appendOutput(`Recipients: ${recipients.join(', ')}`)
     appendOutput(`Threshold: ${threshold}`)
-
-    // Validate secret key format
-    let secretKeyBytes
     try {
-      secretKeyBytes = window.hexToUint8Array(secretKeyInput)
+      const generation = window.thresholdSigning.generateAllMessage({
+        secretKey: secretKeyInput,
+        recipients,
+        threshold
+      })
+
+      generatedAllMessage = generation.allMessage
+      window.thresholdSigningState.lastGeneratedAllMessage = generation
+
+      appendOutput(`Generated keypair: ${generation.keypairBytes.length} bytes`)
+      appendOutput(`Concatenated recipients: ${generation.recipientsConcat.length} bytes`)
+      appendOutput(`✓ AllMessage generated successfully: ${generation.allMessage.length} bytes`)
+      appendOutput(`First 16 bytes: ${Array.from(generation.allMessage.slice(0, 16)).map(b => b.toString(16).padStart(2, '0')).join(' ')}`)
+
+      const outputDiv = document.getElementById('all-message-output')
+      outputDiv.textContent = `AllMessage (${generation.allMessage.length} bytes): ${generation.allMessageHex}`
+
+      const actionsDiv = document.getElementById('all-message-actions')
+      actionsDiv.style.display = 'block'
+
+      appendOutput('AllMessage ready for sending or storage')
     } catch (err) {
-      appendOutput(`Invalid secret key format: ${err.message}`)
-      return
+      appendOutput(`Error generating AllMessage: ${err.message}`)
+      console.error('Generate AllMessage error:', err)
     }
-
-    // Validate recipient addresses
-    for (const recipient of recipients) {
-      try {
-        validatePolkadotAddress(recipient)
-      } catch (err) {
-        appendOutput(`Invalid recipient address ${recipient}: ${err.message}`)
-        return
-      }
-    }
-
-    // Create keypair from secret key
-    const keypairBytes = window.createKeypairBytes(secretKeyInput)
-    appendOutput(`Generated keypair: ${keypairBytes.length} bytes`)
-
-    // Convert recipients to concatenated public key bytes
-    const recipientBytes = recipients.map(recipient => {
-      return window.ss58ToPublicKeyBytes(recipient)
-    })
-
-    // Concatenate all recipient public keys
-    const totalLength = recipientBytes.reduce((sum, bytes) => sum + bytes.length, 0)
-    const recipientsConcat = new Uint8Array(totalLength)
-    let offset = 0
-    for (const bytes of recipientBytes) {
-      recipientsConcat.set(bytes, offset)
-      offset += bytes.length
-    }
-
-    appendOutput(`Concatenated recipients: ${recipientsConcat.length} bytes`)
-
-    // Call the WASM function to generate AllMessage
-    const allMessage = window.wasm_simplpedpop_contribute_all(keypairBytes, threshold, recipientsConcat)
-
-    appendOutput(`✓ AllMessage generated successfully: ${allMessage.length} bytes`)
-    appendOutput(`First 16 bytes: ${Array.from(allMessage.slice(0, 16)).map(b => b.toString(16).padStart(2, '0')).join(' ')}`)
-
-    // Store the generated AllMessage globally
-    generatedAllMessage = allMessage
-
-    // Display the AllMessage in hex format
-    const allMessageHex = Array.from(allMessage).map(b => b.toString(16).padStart(2, '0')).join('')
-    const outputDiv = document.getElementById('all-message-output')
-    outputDiv.textContent = `AllMessage (${allMessage.length} bytes): ${allMessageHex}`
-
-    // Show action buttons
-    const actionsDiv = document.getElementById('all-message-actions')
-    actionsDiv.style.display = 'block'
-
-    appendOutput('AllMessage ready for sending or storage')
 
   } catch (err) {
     appendOutput(`Error generating AllMessage: ${err.message}`)
@@ -1524,83 +1919,61 @@ window['process-all-messages'].onclick = async () => {
     appendOutput(`Generated AllMessage: ${generatedAllMessage.length} bytes`)
     appendOutput(`Received AllMessage: ${receivedAllMessage.length} bytes`)
 
-    // Create keypair from secret key
-    const keypairBytes = window.createKeypairBytes(secretKeyInput)
-    appendOutput(`Generated keypair: ${keypairBytes.length} bytes`)
+    try {
+      const processing = window.thresholdSigning.processAllMessages({
+        secretKey: secretKeyInput,
+        allMessages: [generatedAllMessage, receivedAllMessage]
+      })
 
-    // Create JSON array of AllMessage bytes (following test pattern)
-    const allMessagesArray = [
-      Array.from(generatedAllMessage),
-      Array.from(receivedAllMessage)
-    ]
-    const allMessagesJson = JSON.stringify(allMessagesArray)
-    const allMessagesBytes = new TextEncoder().encode(allMessagesJson)
+      appendOutput('Calling wasm_simplpedpop_recipient_all...')
+      appendOutput(`✓ Threshold key generated successfully: ${processing.thresholdPublicKey.length} bytes`)
+      appendOutput(`✓ SPP Output Message: ${processing.sppOutputMessage.length} bytes`)
+      appendOutput(`✓ Signing Keypair: ${processing.signingKeypair.length} bytes`)
+      appendOutput(`First 16 bytes: ${processing.thresholdPublicKeyArray.slice(0, 16).map(b => b.toString(16).padStart(2, '0')).join(' ')}`)
+      appendOutput(`Threshold Public Key (hex): ${processing.thresholdPublicKeyHex}`)
 
-    appendOutput(`AllMessages JSON: ${allMessagesJson.length} characters`)
-    appendOutput(`AllMessages bytes: ${allMessagesBytes.length} bytes`)
+      window.generatedThresholdKey = processing.thresholdPublicKey
+      window.generatedSppOutputMessage = processing.sppOutputMessage
+      window.generatedSigningKeypair = processing.signingKeypair
+      window.generatedThresholdResult = processing
+      window.thresholdSigningState.lastProcessedThreshold = processing
 
-    // Call the WASM function to generate threshold key
-    appendOutput('Calling wasm_simplpedpop_recipient_all...')
-    const result = window.wasm_simplpedpop_recipient_all(keypairBytes, allMessagesBytes)
+      const thresholdKeyOutput = document.createElement('div')
+      thresholdKeyOutput.style.marginTop = '10px'
+      thresholdKeyOutput.style.padding = '10px'
+      thresholdKeyOutput.style.backgroundColor = '#e8f5e8'
+      thresholdKeyOutput.style.border = '1px solid #4caf50'
+      thresholdKeyOutput.style.borderRadius = '5px'
+      thresholdKeyOutput.style.fontFamily = 'monospace'
+      thresholdKeyOutput.style.wordBreak = 'break-all'
 
-    // Extract the components from the result object
-    const thresholdKey = result.threshold_public_key
-    const sppOutputMessage = result.spp_output_message
-    const signingKeypair = result.signing_keypair
+      thresholdKeyOutput.innerHTML = `
+        <h4>🔐 Generated Threshold Public Key</h4>
+        <p><strong>Threshold Key:</strong> ${processing.thresholdPublicKeySS58}</p>
+      `
 
-    appendOutput(`✓ Threshold key generated successfully: ${thresholdKey.length} bytes`)
-    appendOutput(`✓ SPP Output Message: ${sppOutputMessage.length} bytes`)
-    appendOutput(`✓ Signing Keypair: ${signingKeypair.length} bytes`)
-    appendOutput(`First 16 bytes: ${Array.from(thresholdKey.slice(0, 16)).map(b => b.toString(16).padStart(2, '0')).join(' ')}`)
+      const thresholdSection = document.querySelector('section[aria-label="Threshold signing with SimplPedPoP"]')
+      if (thresholdSection) {
+        const existingDisplay = thresholdSection.querySelector('.threshold-key-display')
+        if (existingDisplay) {
+          existingDisplay.remove()
+        }
 
-    // Convert to hex for display
-    const thresholdKeyHex = Array.from(thresholdKey).map(b => b.toString(16).padStart(2, '0')).join('')
-    appendOutput(`Threshold Public Key (hex): ${thresholdKeyHex}`)
-
-    // Store the full result globally for potential future use
-    window.generatedThresholdKey = thresholdKey
-    window.generatedSppOutputMessage = sppOutputMessage
-    window.generatedSigningKeypair = signingKeypair
-    window.generatedThresholdResult = result
-
-    // Display the threshold key in a dedicated area
-    const thresholdKeyOutput = document.createElement('div')
-    thresholdKeyOutput.style.marginTop = '10px'
-    thresholdKeyOutput.style.padding = '10px'
-    thresholdKeyOutput.style.backgroundColor = '#e8f5e8'
-    thresholdKeyOutput.style.border = '1px solid #4caf50'
-    thresholdKeyOutput.style.borderRadius = '5px'
-    thresholdKeyOutput.style.fontFamily = 'monospace'
-    thresholdKeyOutput.style.wordBreak = 'break-all'
-
-    // Convert threshold key to SS58 address
-    const thresholdKeySS58 = encodeAddress(thresholdKey)
-
-    thresholdKeyOutput.innerHTML = `
-      <h4>🔐 Generated Threshold Public Key</h4>
-      <p><strong>Threshold Key:</strong> ${thresholdKeySS58}</p>
-    `
-
-    // Find the threshold signing section and append the result
-    const thresholdSection = document.querySelector('section[aria-label="Threshold signing with SimplPedPoP"]')
-    if (thresholdSection) {
-      // Remove any existing threshold key display
-      const existingDisplay = thresholdSection.querySelector('.threshold-key-display')
-      if (existingDisplay) {
-        existingDisplay.remove()
+        thresholdKeyOutput.className = 'threshold-key-display'
+        thresholdSection.appendChild(thresholdKeyOutput)
       }
 
-      thresholdKeyOutput.className = 'threshold-key-display'
-      thresholdSection.appendChild(thresholdKeyOutput)
-    }
+      appendOutput('✓ Threshold key processing completed successfully!')
+      appendOutput('The threshold public key, SPP output message, and signing keypair are now available for use in threshold signing operations.')
 
-    appendOutput('✓ Threshold key processing completed successfully!')
-    appendOutput('The threshold public key, SPP output message, and signing keypair are now available for use in threshold signing operations.')
-
-    // Show Round 1 signing button
-    const round1Actions = document.getElementById('round1-signing-actions')
-    if (round1Actions) {
-      round1Actions.style.display = 'block'
+      const round1Actions = document.getElementById('round1-signing-actions')
+      if (round1Actions) {
+        round1Actions.style.display = 'block'
+      }
+    } catch (err) {
+      appendOutput(`Error processing AllMessages: ${err.message}`)
+      console.error('Process AllMessages error:', err)
+      return
     }
 
   } catch (err) {
@@ -1618,24 +1991,31 @@ window['run-round1-signing'].onclick = async () => {
     }
 
     appendOutput('Running Round 1 signing...')
-    const result = wasm_threshold_sign_round1(window.generatedSigningKeypair)
+    const result = window.thresholdSigning.runRound1({ signingKeypair: window.generatedSigningKeypair })
 
-    // Parse JSON strings
-    round1Nonces = JSON.parse(result.signing_nonces)
-    round1Commitments = JSON.parse(result.signing_commitments)
+    round1Nonces = result.signingNoncesArray
+    round1Commitments = result.signingCommitmentsArray
+    window.thresholdSigningState.lastRound1 = result
+
+    const noncesLength = Array.isArray(round1Nonces) ? round1Nonces.length : 0
+    const commitmentsLength = Array.isArray(round1Commitments) ? round1Commitments.length : 0
 
     appendOutput(`✓ Round 1 signing completed`)
-    appendOutput(`✓ Nonces: ${round1Nonces.length} bytes`)
-    appendOutput(`✓ Commitments: ${round1Commitments.length} bytes`)
+    appendOutput(`✓ Nonces: ${noncesLength} bytes`)
+    appendOutput(`✓ Commitments: ${commitmentsLength} bytes`)
 
-    // Display Round 1 results
     const round1Output = document.getElementById('round1-output')
     if (round1Output) {
-      const noncesHex = round1Nonces.map(b => b.toString(16).padStart(2, '0')).join('')
-      const commitmentsHex = round1Commitments.map(b => b.toString(16).padStart(2, '0')).join('')
+      const noncesHexSummary = Array.isArray(result.signingNoncesHex)
+        ? result.signingNoncesHex[0]
+        : result.signingNoncesHex
+      const commitmentsHexSummary = Array.isArray(result.signingCommitmentsHex)
+        ? result.signingCommitmentsHex[0]
+        : result.signingCommitmentsHex
+
       round1Output.innerHTML = `
-        <p><strong>Nonces (${round1Nonces.length} bytes):</strong> ${noncesHex.substring(0, 64)}...</p>
-        <p><strong>Commitments (${round1Commitments.length} bytes):</strong> ${commitmentsHex.substring(0, 64)}...</p>
+        <p><strong>Nonces (${noncesLength} bytes):</strong> ${noncesHexSummary?.substring(0, 64) ?? 'n/a'}...</p>
+        <p><strong>Commitments (${commitmentsLength} bytes):</strong> ${commitmentsHexSummary?.substring(0, 64) ?? 'n/a'}...</p>
       `
     }
 
@@ -1692,6 +2072,42 @@ window['send-round1-commitments'].onclick = async () => {
   }
 }
 
+window['load-round1-commitments'].onclick = () => {
+  const textarea = document.getElementById('peer-round1-commitments')
+  if (!textarea) {
+    appendOutput('Peer commitments input not found in DOM.')
+    return
+  }
+
+  const rawText = textarea.value.trim()
+  if (!rawText) {
+    appendOutput('Please paste peer commitments JSON before loading.')
+    return
+  }
+
+  try {
+    const normalized = parsePeerByteArraysInput(rawText, 'peer commitments')
+    receivedRound1Commitments = normalized
+    window.thresholdSigningState.peerCommitments = normalized.map(entry => [...entry])
+    textarea.value = JSON.stringify(normalized, null, 2)
+    updatePeerRound1CommitmentsStatus()
+    appendOutput(`Loaded ${normalized.length} peer commitment set(s) from manual input.`)
+  } catch (error) {
+    appendOutput(`Failed to load peer commitments: ${error.message}`)
+  }
+}
+
+window['clear-round1-commitments'].onclick = () => {
+  const textarea = document.getElementById('peer-round1-commitments')
+  if (textarea) {
+    textarea.value = ''
+  }
+  receivedRound1Commitments = []
+  window.thresholdSigningState.peerCommitments = []
+  updatePeerRound1CommitmentsStatus()
+  appendOutput('Peer commitments cleared.')
+}
+
 // Round 2 Signing Handler
 window['run-round2-signing'].onclick = async () => {
   try {
@@ -1741,36 +2157,34 @@ window['run-round2-signing'].onclick = async () => {
     appendOutput('Running Round 2 signing...')
     appendOutput(`Payload: ${payloadText}`)
     appendOutput(`Context: ${contextText}`)
+    try {
+      const result = window.thresholdSigning.runRound2({
+        signingKeypair: window.generatedSigningKeypair,
+        signingNonces: round1Nonces,
+        commitments: allCommitments,
+        sppOutputMessage: window.generatedSppOutputMessage,
+        payload: payloadText,
+        context: contextText
+      })
 
-    const payload = new TextEncoder().encode(payloadText)
+      appendOutput(`Commitments JSON length: ${result.commitmentsJson.length} characters`)
 
-    // Prepare commitments for WASM (JSON encode)
-    const commitmentsJson = JSON.stringify(allCommitments)
-    const commitmentsBytes = new TextEncoder().encode(commitmentsJson)
+      round2SigningPackage = result.signingPackageArray
+      window.thresholdSigningState.lastRound2 = result
 
-    appendOutput(`Commitments JSON length: ${commitmentsJson.length} characters`)
+      appendOutput(`✓ Round 2 signing completed`)
+      appendOutput(`✓ Signing package: ${round2SigningPackage.length} bytes`)
 
-    const result = wasm_threshold_sign_round2(
-      window.generatedSigningKeypair,
-      new Uint8Array(round1Nonces),
-      commitmentsBytes,
-      window.generatedSppOutputMessage,
-      payload,
-      contextText
-    )
-
-    round2SigningPackage = Array.from(result)
-
-    appendOutput(`✓ Round 2 signing completed`)
-    appendOutput(`✓ Signing package: ${round2SigningPackage.length} bytes`)
-
-    // Display Round 2 results
-    const round2Output = document.getElementById('round2-output')
-    if (round2Output) {
-      const packageHex = round2SigningPackage.map(b => b.toString(16).padStart(2, '0')).join('')
-      round2Output.innerHTML = `
-        <p><strong>Signing Package (${round2SigningPackage.length} bytes):</strong> ${packageHex.substring(0, 128)}...</p>
-      `
+      const round2Output = document.getElementById('round2-output')
+      if (round2Output) {
+        round2Output.innerHTML = `
+          <p><strong>Signing Package (${round2SigningPackage.length} bytes):</strong> ${result.signingPackageHex.substring(0, 128)}...</p>
+        `
+      }
+    } catch (err) {
+      appendOutput(`Error in Round 2 signing: ${err.message}`)
+      console.error('Round 2 signing error:', err)
+      return
     }
 
     // Show signing package actions
@@ -1859,43 +2273,28 @@ window['aggregate-signatures'].onclick = async () => {
 
     // Prepare signing packages for WASM (JSON encode)
     // The format should be an array of byte arrays: [[bytes...], [bytes...]]
-    const signingPackagesJson = JSON.stringify(allSigningPackages)
-    const signingPackagesBytes = new TextEncoder().encode(signingPackagesJson)
-
-    appendOutput(`JSON length: ${signingPackagesJson.length} characters`)
-    appendOutput(`Bytes length: ${signingPackagesBytes.length} bytes`)
-
     try {
-      // Use the globally exposed WASM function
-      const aggregatedSignature = window.wasm_aggregate_threshold_signature(signingPackagesBytes)
+      const aggregation = window.thresholdSigning.aggregateSignatures({
+        signingPackages: allSigningPackages
+      })
 
-      if (!aggregatedSignature) {
-        throw new Error('WASM function returned null/undefined')
-      }
-
-      if (!(aggregatedSignature instanceof Uint8Array)) {
-        throw new Error(`WASM function returned unexpected type: ${typeof aggregatedSignature}, constructor: ${aggregatedSignature?.constructor?.name}`)
-      }
-
-      const signatureBytes = Array.from(aggregatedSignature)
+      appendOutput(`JSON length: ${aggregation.signingPackagesJson.length} characters`)
+      appendOutput(`Bytes length: ${new TextEncoder().encode(aggregation.signingPackagesJson).length} bytes`)
 
       appendOutput(`✓ Signature aggregation completed`)
-      appendOutput(`✓ Aggregated signature: ${signatureBytes.length} bytes`)
+      appendOutput(`✓ Aggregated signature: ${aggregation.aggregatedSignatureArray.length} bytes`)
+      appendOutput(`✓ Signature (hex): ${aggregation.aggregatedSignatureHex}`)
 
-      const signatureHex = signatureBytes.map(b => b.toString(16).padStart(2, '0')).join('')
-      appendOutput(`✓ Signature (hex): ${signatureHex}`)
-
-      // Display aggregated signature
       const signingPackageOutput = document.getElementById('signing-package-output')
       if (signingPackageOutput) {
         signingPackageOutput.innerHTML = `
-          <p><strong>Aggregated Signature (${signatureBytes.length} bytes):</strong></p>
-          <p style="word-break: break-all;">${signatureHex}</p>
+          <p><strong>Aggregated Signature (${aggregation.aggregatedSignatureArray.length} bytes):</strong></p>
+          <p style="word-break: break-all;">${aggregation.aggregatedSignatureHex}</p>
         `
       }
 
-      // Store globally
-      window.aggregatedSignature = signatureBytes
+      window.aggregatedSignature = Array.from(aggregation.aggregatedSignature)
+      window.thresholdSigningState.lastAggregatedSignature = aggregation
     } catch (wasmErr) {
       // Handle WASM-specific errors
       let errorMessage = 'Unknown error'
@@ -1923,6 +2322,42 @@ window['aggregate-signatures'].onclick = async () => {
     console.error('Aggregate signatures error:', err)
     console.error('Error stack:', err?.stack)
   }
+}
+
+window['load-signing-packages'].onclick = () => {
+  const textarea = document.getElementById('peer-signing-packages')
+  if (!textarea) {
+    appendOutput('Peer signing packages input not found in DOM.')
+    return
+  }
+
+  const rawText = textarea.value.trim()
+  if (!rawText) {
+    appendOutput('Please paste peer signing packages JSON before loading.')
+    return
+  }
+
+  try {
+    const normalized = parsePeerByteArraysInput(rawText, 'peer signing packages')
+    receivedSigningPackages = normalized
+    window.thresholdSigningState.peerSigningPackages = normalized.map(entry => [...entry])
+    textarea.value = JSON.stringify(normalized, null, 2)
+    updatePeerSigningPackagesStatus()
+    appendOutput(`Loaded ${normalized.length} peer signing package(s) from manual input.`)
+  } catch (error) {
+    appendOutput(`Failed to load peer signing packages: ${error.message}`)
+  }
+}
+
+window['clear-signing-packages'].onclick = () => {
+  const textarea = document.getElementById('peer-signing-packages')
+  if (textarea) {
+    textarea.value = ''
+  }
+  receivedSigningPackages = []
+  window.thresholdSigningState.peerSigningPackages = []
+  updatePeerSigningPackagesStatus()
+  appendOutput('Peer signing packages cleared.')
 }
 
 

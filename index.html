@@ -88,6 +88,25 @@
       transition: border-color 0.2s ease;
     }
 
+    textarea {
+      width: var(--input-width-large);
+      min-height: 120px;
+      padding: 8px 12px;
+      border: 1px solid var(--border-color);
+      border-radius: var(--border-radius);
+      font-size: 13px;
+      font-family: monospace;
+      line-height: 1.5;
+      resize: vertical;
+      transition: border-color 0.2s ease;
+    }
+
+    textarea:focus {
+      outline: none;
+      border-color: #007bff;
+      box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.25);
+    }
+
     input[type="text"]:focus {
       outline: none;
       border-color: #007bff;
@@ -172,6 +191,11 @@
         width: 100%;
         max-width: var(--input-width-medium);
       }
+
+      textarea {
+        width: 100%;
+        max-width: var(--input-width-large);
+      }
     }
   </style>
 </head>
@@ -250,6 +274,20 @@
             <button type="button" id="send-round1-commitments" style="display: none;">Send Commitments to Connected
               Peer</button>
             <div id="round1-output" style="margin-top: 10px; font-family: monospace; word-break: break-all;"></div>
+            <div style="margin-top: 15px;">
+              <label for="peer-round1-commitments" style="margin-bottom: 5px;">Paste peer Round 1 commitments (JSON
+                array of byte arrays):</label>
+              <textarea id="peer-round1-commitments" placeholder='Example: [[1,2,3,...],[4,5,6,...]]'></textarea>
+              <div style="display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px;">
+                <button type="button" id="load-round1-commitments" aria-label="Load peer commitments from JSON">Load
+                  Peer Commitments</button>
+                <button type="button" id="clear-round1-commitments" aria-label="Clear loaded peer commitments">Clear
+                  Peer Commitments</button>
+              </div>
+              <p id="round1-commitments-status" style="font-size: 12px; color: #555; margin-top: 6px;">
+                No peer commitments loaded.
+              </p>
+            </div>
           </div>
           <div id="round2-signing-actions" style="margin-top: 10px; display: none;">
             <h3>Round 2 Signing</h3>
@@ -271,6 +309,20 @@
             <button type="button" id="send-signing-package">Send Signing Package to Connected Peer</button>
             <button type="button" id="aggregate-signatures">Aggregate Signatures</button>
             <div id="signing-package-output" style="margin-top: 10px; font-family: monospace; word-break: break-all;">
+            </div>
+            <div style="margin-top: 15px;">
+              <label for="peer-signing-packages" style="margin-bottom: 5px;">Paste peer signing packages (JSON array
+                of byte arrays):</label>
+              <textarea id="peer-signing-packages" placeholder='Example: [[12,34,56,...],[78,90,12,...]]'></textarea>
+              <div style="display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px;">
+                <button type="button" id="load-signing-packages" aria-label="Load peer signing packages from JSON">Load
+                  Peer Signing Packages</button>
+                <button type="button" id="clear-signing-packages" aria-label="Clear loaded peer signing packages">Clear
+                  Peer Signing Packages</button>
+              </div>
+              <p id="signing-packages-status" style="font-size: 12px; color: #555; margin-top: 6px;">
+                No peer signing packages loaded.
+              </p>
             </div>
           </div>
         </form>
