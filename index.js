@@ -1977,7 +1977,8 @@ window['log-debug-message'].onclick = async () => {
       const chain = api.runtimeChain.toString()
       appendOutput(`Connected to ${chain} via ${wsEndpoint}`)
 
-      const remarkBytes = new TextEncoder().encode(remarkText)
+      const textEncoder = new TextEncoder()
+      const remarkBytes = textEncoder.encode(remarkText)
       const remarkHex = toHexString(remarkBytes, { withPrefix: true })
       const remark = api.tx.system.remark(remarkHex)
 
@@ -2008,6 +2009,116 @@ window['log-debug-message'].onclick = async () => {
       const signableU8a = extrinsicPayload.toU8a({ method: true })
       const signableHex = u8aToHex(signableU8a)
 
+      appendOutput('Running threshold signing protocol for extrinsic payload...')
+
+      const round1ResultA = window.thresholdSigning.runRound1({ signingKeypair: participantA.signingKeypair })
+      const round1ResultB = window.thresholdSigning.runRound1({ signingKeypair: participantB.signingKeypair })
+
+      const noncesA = JSON.parse(round1ResultA.signingNoncesJson)
+      const noncesB = JSON.parse(round1ResultB.signingNoncesJson)
+      const commitmentsA = JSON.parse(round1ResultA.signingCommitmentsJson)
+      const commitmentsB = JSON.parse(round1ResultB.signingCommitmentsJson)
+
+      appendOutput('✓ Round 1 completed for both participants')
+
+      const toUint8 = (value, label) => {
+        if (!Array.isArray(value)) {
+          throw new Error(`${label} must be an array`)
+        }
+        if (value.length > 0 && Array.isArray(value[0])) {
+          return new Uint8Array(value.flat())
+        }
+        return new Uint8Array(value)
+      }
+
+      const commitmentsArray = [commitmentsA, commitmentsB]
+      const commitmentsJson = JSON.stringify(commitmentsArray)
+      const commitmentsBytes = textEncoder.encode(commitmentsJson)
+
+      const signingPackageA = window.wasm_threshold_sign_round2(
+        participantA.signingKeypair,
+        toUint8(noncesA, 'noncesA'),
+        commitmentsBytes,
+        participantA.sppOutputMessage,
+        signableU8a,
+        signingContext
+      )
+
+      const signingPackageB = window.wasm_threshold_sign_round2(
+        participantB.signingKeypair,
+        toUint8(noncesB, 'noncesB'),
+        commitmentsBytes,
+        participantB.sppOutputMessage,
+        signableU8a,
+        signingContext
+      )
+
+      appendOutput('✓ Round 2 completed for both participants')
+
+      const signingPackagesArray = [
+        Array.from(signingPackageA),
+        Array.from(signingPackageB)
+      ]
+      const signingPackagesJson = JSON.stringify(signingPackagesArray)
+      const signingPackagesBytes = textEncoder.encode(signingPackagesJson)
+      const aggregatedSignature = window.wasm_aggregate_threshold_signature(signingPackagesBytes)
+
+      appendOutput(`✓ Signature aggregation completed (${aggregatedSignature.length} bytes)`)
+
+      if (aggregatedSignature.length !== 64) {
+        throw new Error(`Aggregated signature must be 64 bytes for Sr25519. Received: ${aggregatedSignature.length}`)
+      }
+
+      await initializeCrypto()
+
+      const contextBytes = signingContext ? textEncoder.encode(signingContext) : new Uint8Array()
+      const messageWithContext = new Uint8Array(contextBytes.length + signableU8a.length)
+      messageWithContext.set(contextBytes, 0)
+      messageWithContext.set(signableU8a, contextBytes.length)
+      const signatureValid = sr25519Verify(messageWithContext, aggregatedSignature, thresholdPublicKey)
+
+      appendOutput(`Signature valid: ${signatureValid}`)
+
+      const signatureType = api.registry.createType('MultiSignature', { Sr25519: aggregatedSignature })
+      const signedExtrinsic = remark.addSignature(accountId32, signatureType, {
+        era,
+        nonce,
+        tip: '0'
+      })
+
+      const signedHex = signedExtrinsic.toHex()
+
+      let txHash = null
+      let submissionError = null
+      let balance = null
+      let estimatedFee = null
+
+      try {
+        const accountInfoCurrent = await api.query.system.account(accountId32)
+        balance = accountInfoCurrent.data.free.toBigInt()
+        const balanceWND = Number(balance) / 1e12
+        appendOutput(`Account balance: ${balanceWND.toFixed(6)} WND`)
+
+        const paymentInfo = await signedExtrinsic.paymentInfo(accountId32)
+        estimatedFee = paymentInfo.partialFee.toBigInt()
+        const feeWND = Number(estimatedFee) / 1e12
+        appendOutput(`Estimated fee: ${feeWND.toFixed(6)} WND`)
+
+        const requiredBalance = estimatedFee + BigInt(1e10)
+        if (balance < requiredBalance) {
+          appendOutput('⚠️  Insufficient balance on threshold account. Skipping submission.')
+          appendOutput(`   Required: ${(Number(requiredBalance) / 1e12).toFixed(6)} WND`)
+          appendOutput(`   Available: ${balanceWND.toFixed(6)} WND`)
+        } else {
+          appendOutput('Submitting signed extrinsic...')
+          txHash = await api.rpc.author.submitExtrinsic(signedHex)
+          appendOutput(`✓ Extrinsic submitted. TxHash: ${txHash.toHex()}`)
+        }
+      } catch (error) {
+        submissionError = error
+        appendOutput(`⚠️  Extrinsic submission error: ${error.message}`)
+      }
+
       const details = {
         chain,
         rpcEndpoint: wsEndpoint,
@@ -2019,10 +2130,23 @@ window['log-debug-message'].onclick = async () => {
         transactionVersion: payloadFields.transactionVersion,
         signablePayloadHex: signableHex,
         signablePayloadLength: signableU8a.length,
-        signingContext
+        signingContext,
+        signingPackagesJson,
+        aggregatedSignatureHex: u8aToHex(aggregatedSignature),
+        aggregatedSignatureLength: aggregatedSignature.length,
+        signedExtrinsicHex: signedHex,
+        signedExtrinsicLength: signedHex.length,
+        signatureValid,
+        balance: balance ? balance.toString() : null,
+        estimatedFee: estimatedFee ? estimatedFee.toString() : null,
+        txHash: txHash ? txHash.toHex() : null,
+        submissionError: submissionError ? submissionError.message : null
       }
 
       window.constructedExtrinsicPayload = details
+      window.generatedSigningPackages = signingPackagesArray
+      window.generatedAggregatedSignature = aggregatedSignature
+      window.generatedSignedExtrinsic = signedHex
 
       if (extrinsicOutput) {
         extrinsicOutput.innerHTML = `
@@ -2036,6 +2160,13 @@ window['log-debug-message'].onclick = async () => {
           <p><strong>Remark (hex):</strong> ${details.remarkHex}</p>
           <p><strong>Signable Payload (${details.signablePayloadLength} bytes):</strong></p>
           <p style="word-break: break-all;">${details.signablePayloadHex}</p>
+          <p><strong>Aggregated Signature (${details.aggregatedSignatureLength} bytes):</strong></p>
+          <p style="word-break: break-all;">${details.aggregatedSignatureHex}</p>
+          <p><strong>Signed Extrinsic (${details.signedExtrinsicLength} characters):</strong></p>
+          <p style="word-break: break-all;">${details.signedExtrinsicHex}</p>
+          <p><strong>Signature valid:</strong> ${details.signatureValid}</p>
+          ${details.txHash ? `<p><strong>TxHash:</strong> ${details.txHash}</p>` : ''}
+          ${details.submissionError ? `<p><strong>Submission error:</strong> ${details.submissionError}</p>` : ''}
         `
       }
 
