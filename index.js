@@ -12,11 +12,13 @@ import { WebRTC } from '@multiformats/multiaddr-matcher'
 import { byteStream } from 'it-byte-stream'
 import { createLibp2p } from 'libp2p'
 import { fromString, toString } from 'uint8arrays'
+import { ApiPromise, WsProvider } from '@polkadot/api'
 import { decodeAddress, encodeAddress } from '@polkadot/keyring'
 import { cryptoWaitReady, sr25519Sign, sr25519Verify, sr25519PairFromSeed } from '@polkadot/util-crypto'
-import { hexToU8a } from '@polkadot/util'
+import { hexToU8a, u8aToHex } from '@polkadot/util'
 import { createEd25519PeerId } from '@libp2p/peer-id-factory'
 import initOlaf, { wasm_simplpedpop_contribute_all, wasm_keypair_from_secret, wasm_simplpedpop_recipient_all, wasm_aggregate_threshold_signature, wasm_threshold_sign_round1, wasm_threshold_sign_round2 } from './olaf/pkg/olaf.js'
+import thresholdKeysCache from './test/threshold-keys-cache.json' assert { type: 'json' }
 
 // Constants
 const WEBRTC_CODE = WebRTC.code
@@ -218,6 +220,67 @@ const parseSigningJson = (jsonString, label) => {
     hex: toHexString(bytes)
   }
 }
+
+const normalizeCacheEntry = (value, label) => {
+  if (value instanceof Uint8Array) {
+    return value
+  }
+
+  if (Array.isArray(value)) {
+    return Uint8Array.from(value)
+  }
+
+  console.warn(`threshold-keys-cache.json is missing a valid ${label}; ignoring cache entry`)
+  return null
+}
+
+const buildThresholdKeysCache = () => {
+  if (!thresholdKeysCache || typeof thresholdKeysCache !== 'object') {
+    return null
+  }
+
+  const thresholdPublicKey = normalizeCacheEntry(
+    thresholdKeysCache.thresholdPublicKey1 ?? thresholdKeysCache.thresholdPublicKey,
+    'thresholdPublicKey1'
+  )
+  const sppOutputMessage1 = normalizeCacheEntry(thresholdKeysCache.sppOutputMessage1, 'sppOutputMessage1')
+  const sppOutputMessage2 = normalizeCacheEntry(thresholdKeysCache.sppOutputMessage2, 'sppOutputMessage2')
+  const signingKeypair1 = normalizeCacheEntry(thresholdKeysCache.signingKeypair1, 'signingKeypair1')
+  const signingKeypair2 = normalizeCacheEntry(thresholdKeysCache.signingKeypair2, 'signingKeypair2')
+
+  if (!thresholdPublicKey || !sppOutputMessage1 || !sppOutputMessage2 || !signingKeypair1 || !signingKeypair2) {
+    console.warn('threshold-keys-cache.json is missing required entries; falling back to runtime generation')
+    return null
+  }
+
+  return Object.freeze({
+    thresholdPublicKey,
+    thresholdPublicKeyHex: toHexString(thresholdPublicKey, { withPrefix: true }),
+    thresholdPublicKeySS58: encodeAddress(thresholdPublicKey, 42),
+    sppOutputMessage1,
+    sppOutputMessage2,
+    signingKeypair1,
+    signingKeypair2
+  })
+}
+
+const THRESHOLD_KEYS_CACHE = buildThresholdKeysCache()
+
+const EXTRINSIC_TEST_CONFIG = Object.freeze({
+  recipients: [
+    '5CXkZyy4S5b3w16wvKA2hUwzp5q2y7UtRPkXnW97QGvDN8Jw',
+    '5Gma8SNsn6rkQf9reAWFQ9WKq8bwwHtSzwMYtLTdhYsGPKiy'
+  ],
+  secretKeys: [
+    '0x473a77675b8e77d90c1b6dc2dbe6ac533b0853790ea8bcadf0ee8b5da4cfbbce',
+    '0xdb9ddbb3d6671c4de8248a4fba95f3d873dc21a0434b52951bb33730c1ac93d7'
+  ],
+  threshold: 2,
+  remarkText: 'Hello Westend (threshold signing example)',
+  wsEndpoint: 'wss://westend-rpc.polkadot.io',
+  signingContext: 'substrate',
+  thresholdCache: THRESHOLD_KEYS_CACHE
+})
 
 const createThresholdSigningApi = () => {
   const textEncoder = new TextEncoder()
@@ -1819,6 +1882,178 @@ window.restartSession = async () => {
     appendOutput('Session restarted successfully')
   } catch (error) {
     appendOutput(`Failed to restart session: ${error.message}`)
+  }
+}
+
+window['log-debug-message'].onclick = async () => {
+  if (!window.wasmReady || !window.thresholdSigning) {
+    appendOutput('WASM module not ready. Please wait for initialization to complete.')
+    return
+  }
+
+  const extrinsicOutput = document.getElementById('extrinsic-output')
+  if (extrinsicOutput) {
+    extrinsicOutput.textContent = 'Constructing extrinsic payload...'
+  }
+
+  appendOutput('Constructing extrinsic payload using hardcoded test values...')
+
+  const { recipients, secretKeys, threshold, remarkText, wsEndpoint, signingContext, thresholdCache } = EXTRINSIC_TEST_CONFIG
+  const [secretKeyA, secretKeyB] = secretKeys
+
+  try {
+    let participantA
+    let participantB
+
+    if (thresholdCache) {
+      appendOutput('Using cached threshold keys from threshold-keys-cache.json')
+      participantA = {
+        thresholdPublicKey: thresholdCache.thresholdPublicKey,
+        thresholdPublicKeyHex: thresholdCache.thresholdPublicKeyHex,
+        thresholdPublicKeySS58: thresholdCache.thresholdPublicKeySS58,
+        sppOutputMessage: thresholdCache.sppOutputMessage1,
+        signingKeypair: thresholdCache.signingKeypair1
+      }
+      participantB = {
+        thresholdPublicKey: thresholdCache.thresholdPublicKey,
+        thresholdPublicKeyHex: thresholdCache.thresholdPublicKeyHex,
+        thresholdPublicKeySS58: thresholdCache.thresholdPublicKeySS58,
+        sppOutputMessage: thresholdCache.sppOutputMessage2,
+        signingKeypair: thresholdCache.signingKeypair2
+      }
+    } else {
+      appendOutput('threshold-keys-cache.json missing required data; generating threshold keys at runtime...')
+
+      const generationA = window.thresholdSigning.generateAllMessage({
+        secretKey: secretKeyA,
+        recipients,
+        threshold
+      })
+
+      const generationB = window.thresholdSigning.generateAllMessage({
+        secretKey: secretKeyB,
+        recipients,
+        threshold
+      })
+
+      const allMessages = [generationA.allMessage, generationB.allMessage]
+
+      participantA = window.thresholdSigning.processAllMessages({
+        secretKey: secretKeyA,
+        allMessages
+      })
+
+      participantB = window.thresholdSigning.processAllMessages({
+        secretKey: secretKeyB,
+        allMessages
+      })
+    }
+
+    if (participantA.thresholdPublicKeyHex !== participantB.thresholdPublicKeyHex) {
+      throw new Error('Threshold public keys differ between participants')
+    }
+
+    appendOutput(`Threshold public key (SS58): ${participantA.thresholdPublicKeySS58}`)
+
+    window.generatedThresholdKey = participantA.thresholdPublicKey
+    window.generatedSppOutputMessage = participantA.sppOutputMessage
+    window.generatedSigningKeypair = participantA.signingKeypair
+    window.thresholdSigningState = window.thresholdSigningState || {}
+    window.thresholdSigningState.lastProcessedThreshold = {
+      thresholdPublicKey: participantA.thresholdPublicKey,
+      thresholdPublicKeyHex: participantA.thresholdPublicKeyHex,
+      thresholdPublicKeySS58: participantA.thresholdPublicKeySS58,
+      sppOutputMessage: participantA.sppOutputMessage,
+      signingKeypair: participantA.signingKeypair
+    }
+
+    let api = null
+
+    try {
+      const provider = new WsProvider(wsEndpoint)
+      api = await ApiPromise.create({ provider })
+      await api.isReady
+
+      const chain = api.runtimeChain.toString()
+      appendOutput(`Connected to ${chain} via ${wsEndpoint}`)
+
+      const remarkBytes = new TextEncoder().encode(remarkText)
+      const remarkHex = toHexString(remarkBytes, { withPrefix: true })
+      const remark = api.tx.system.remark(remarkHex)
+
+      const thresholdPublicKey = participantA.thresholdPublicKey
+      const accountId32 = api.registry.createType('AccountId32', thresholdPublicKey)
+
+      const accountInfo = await api.query.system.account(accountId32)
+      const nonce = accountInfo?.nonce ?? api.registry.createType('Index', 0)
+
+      const era = api.registry.createType('ExtrinsicEra', '0x00')
+      const genesisHash = api.genesisHash.toHex()
+
+      const payloadFields = {
+        method: remark.method.toHex(),
+        nonce: nonce.toString(),
+        era: era.toHex(),
+        tip: '0',
+        specVersion: api.runtimeVersion.specVersion.toNumber(),
+        transactionVersion: api.runtimeVersion.transactionVersion.toNumber(),
+        genesisHash,
+        blockHash: genesisHash
+      }
+
+      const extrinsicPayload = api.registry.createType('ExtrinsicPayload', payloadFields, {
+        version: api.extrinsicVersion
+      })
+
+      const signableU8a = extrinsicPayload.toU8a({ method: true })
+      const signableHex = u8aToHex(signableU8a)
+
+      const details = {
+        chain,
+        rpcEndpoint: wsEndpoint,
+        thresholdAccount: participantA.thresholdPublicKeySS58,
+        thresholdPublicKeyHex: participantA.thresholdPublicKeyHex,
+        remarkHex,
+        nonce: nonce.toString(),
+        specVersion: payloadFields.specVersion,
+        transactionVersion: payloadFields.transactionVersion,
+        signablePayloadHex: signableHex,
+        signablePayloadLength: signableU8a.length,
+        signingContext
+      }
+
+      window.constructedExtrinsicPayload = details
+
+      if (extrinsicOutput) {
+        extrinsicOutput.innerHTML = `
+          <p><strong>Chain:</strong> ${details.chain}</p>
+          <p><strong>RPC Endpoint:</strong> ${details.rpcEndpoint}</p>
+          <p><strong>Threshold Account:</strong> ${details.thresholdAccount}</p>
+          <p><strong>Threshold Public Key (hex):</strong> ${details.thresholdPublicKeyHex}</p>
+          <p><strong>Nonce:</strong> ${details.nonce}</p>
+          <p><strong>Spec Version:</strong> ${details.specVersion}</p>
+          <p><strong>Transaction Version:</strong> ${details.transactionVersion}</p>
+          <p><strong>Remark (hex):</strong> ${details.remarkHex}</p>
+          <p><strong>Signable Payload (${details.signablePayloadLength} bytes):</strong></p>
+          <p style="word-break: break-all;">${details.signablePayloadHex}</p>
+        `
+      }
+
+      appendOutput(`Signable payload constructed (${signableU8a.length} bytes).`)
+    } finally {
+      if (extrinsicOutput && extrinsicOutput.textContent === 'Constructing extrinsic payload...') {
+        extrinsicOutput.textContent = ''
+      }
+      if (api) {
+        await api.disconnect()
+        appendOutput('Disconnected from Westend RPC endpoint')
+      }
+    }
+  } catch (error) {
+    appendOutput(`Error constructing extrinsic payload: ${error.message}`)
+    if (extrinsicOutput) {
+      extrinsicOutput.textContent = `Error constructing extrinsic payload: ${error.message}`
+    }
   }
 }
 
