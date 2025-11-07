@@ -466,6 +466,144 @@ const appendOutput = (message) => {
   output.append(div)
 }
 
+const arraysEqual = (a, b) => {
+  if (a.length !== b.length) {
+    return false
+  }
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) {
+      return false
+    }
+  }
+  return true
+}
+
+const pushUniqueByteArray = (target, entry) => {
+  const normalized = Array.from(entry)
+  const exists = target.some(existing => arraysEqual(existing, normalized))
+  if (exists) {
+    return false
+  }
+  target.push([...normalized])
+  return true
+}
+
+const parseIncomingByteArrays = (payload, label) => {
+  const trimmed = payload.trim()
+  if (!trimmed) {
+    throw new Error(`${label} payload is empty`)
+  }
+
+  const normalizedHex = normalizeHexString(trimmed)
+  if (normalizedHex) {
+    return [Array.from(hexToU8a(normalizedHex))]
+  }
+
+  if (trimmed.startsWith('[') || trimmed.startsWith('{')) {
+    return parsePeerByteArraysInput(trimmed, label)
+  }
+
+  throw new Error(`${label} payload is not valid hex or JSON`)
+}
+
+const updatePeerCommitmentsState = () => {
+  if (window.thresholdSigningState) {
+    window.thresholdSigningState.peerCommitments = receivedRound1Commitments.map(entry => [...entry])
+  }
+  const textarea = document.getElementById('peer-round1-commitments')
+  if (textarea) {
+    textarea.value = JSON.stringify(receivedRound1Commitments, null, 2)
+  }
+  updatePeerRound1CommitmentsStatus()
+}
+
+const updatePeerSigningPackagesState = () => {
+  if (window.thresholdSigningState) {
+    window.thresholdSigningState.peerSigningPackages = receivedSigningPackages.map(entry => [...entry])
+  }
+  const textarea = document.getElementById('peer-signing-packages')
+  if (textarea) {
+    textarea.value = JSON.stringify(receivedSigningPackages, null, 2)
+  }
+  updatePeerSigningPackagesStatus()
+}
+
+const handleReceivedAllMessage = (payload) => {
+  const [messageBytes] = parseIncomingByteArrays(payload, 'AllMessage')
+  receivedAllMessage = Uint8Array.from(messageBytes)
+  appendOutput(`✓ AllMessage received and stored: ${receivedAllMessage.length} bytes`)
+}
+
+const handleReceivedRound1Commitments = (payload) => {
+  const entries = parseIncomingByteArrays(payload, 'peer commitments')
+  let added = 0
+  for (const entry of entries) {
+    if (pushUniqueByteArray(receivedRound1Commitments, entry)) {
+      added++
+      appendOutput(`✓ Round 1 commitments received and stored: ${entry.length} bytes`)
+    }
+  }
+
+  if (added > 0) {
+    appendOutput(`✓ Total received commitments: ${receivedRound1Commitments.length}`)
+    updatePeerCommitmentsState()
+  } else {
+    appendOutput('ℹ️ Received Round 1 commitments were duplicates and were ignored')
+  }
+}
+
+const handleReceivedSigningPackages = (payload) => {
+  const entries = parseIncomingByteArrays(payload, 'peer signing packages')
+  let added = 0
+  for (const entry of entries) {
+    if (pushUniqueByteArray(receivedSigningPackages, entry)) {
+      added++
+      appendOutput(`✓ Signing package received and stored: ${entry.length} bytes`)
+    }
+  }
+
+  if (added > 0) {
+    appendOutput(`✓ Total received signing packages: ${receivedSigningPackages.length}`)
+    updatePeerSigningPackagesState()
+  } else {
+    appendOutput('ℹ️ Received signing package was a duplicate and was ignored')
+  }
+}
+
+const processThresholdProtocolMessage = (message) => {
+  if (message.startsWith('ALL_MESSAGE:')) {
+    const payload = message.substring('ALL_MESSAGE:'.length)
+    try {
+      handleReceivedAllMessage(payload)
+    } catch (err) {
+      appendOutput(`Error parsing received AllMessage: ${err.message}`)
+    }
+    return true
+  }
+
+  if (message.startsWith('ROUND1_COMMITMENTS:')) {
+    const payload = message.substring('ROUND1_COMMITMENTS:'.length)
+    try {
+      handleReceivedRound1Commitments(payload)
+    } catch (err) {
+      appendOutput(`Error parsing received commitments: ${err.message}`)
+    }
+    return true
+  }
+
+  if (message.startsWith('SIGNING_PACKAGE:')) {
+    const payload = message.substring('SIGNING_PACKAGE:'.length)
+    try {
+      handleReceivedSigningPackages(payload)
+    } catch (err) {
+      appendOutput(`Error parsing received signing package: ${err.message}`)
+    }
+    return true
+  }
+
+  return false
+}
+
 const isWebrtc = (multiaddr) => WebRTC.matches(multiaddr)
 
 const getRelayConnection = (node) => {
@@ -1041,55 +1179,7 @@ const setupProtocolHandlers = () => {
       }
       const message = toString(buffer.subarray())
       appendOutput(`Received: '${message.substring(0, 50)}${message.length > 50 ? '...' : ''}'`)
-
-      // Check if this is an AllMessage
-      if (message.startsWith('ALL_MESSAGE:')) {
-        const hexMessage = message.substring('ALL_MESSAGE:'.length)
-        try {
-          receivedAllMessage = hexToUint8Array('0x' + hexMessage)
-          appendOutput(`✓ AllMessage received and stored: ${receivedAllMessage.length} bytes`)
-        } catch (err) {
-          appendOutput(`Error parsing received AllMessage: ${err.message}`)
-        }
-      }
-      // Check if this is Round 1 commitments
-      else if (message.startsWith('ROUND1_COMMITMENTS:')) {
-        const hexCommitments = message.substring('ROUND1_COMMITMENTS:'.length)
-        try {
-          const commitmentsBytes = hexToUint8Array('0x' + hexCommitments)
-          const commitmentsArray = Array.from(commitmentsBytes)
-          receivedRound1Commitments.push(commitmentsArray)
-          appendOutput(`✓ Round 1 commitments received and stored: ${commitmentsArray.length} bytes`)
-          appendOutput(`✓ Total received commitments: ${receivedRound1Commitments.length}`)
-          window.thresholdSigningState.peerCommitments = receivedRound1Commitments.map(entry => [...entry])
-          const peerCommitmentsTextarea = document.getElementById('peer-round1-commitments')
-          if (peerCommitmentsTextarea) {
-            peerCommitmentsTextarea.value = JSON.stringify(receivedRound1Commitments, null, 2)
-          }
-          updatePeerRound1CommitmentsStatus()
-        } catch (err) {
-          appendOutput(`Error parsing received commitments: ${err.message}`)
-        }
-      }
-      // Check if this is a signing package
-      else if (message.startsWith('SIGNING_PACKAGE:')) {
-        const hexPackage = message.substring('SIGNING_PACKAGE:'.length)
-        try {
-          const packageBytes = hexToUint8Array('0x' + hexPackage)
-          const packageArray = Array.from(packageBytes)
-          receivedSigningPackages.push(packageArray)
-          appendOutput(`✓ Signing package received and stored: ${packageArray.length} bytes`)
-          appendOutput(`✓ Total received signing packages: ${receivedSigningPackages.length}`)
-          window.thresholdSigningState.peerSigningPackages = receivedSigningPackages.map(entry => [...entry])
-          const peerPackagesTextarea = document.getElementById('peer-signing-packages')
-          if (peerPackagesTextarea) {
-            peerPackagesTextarea.value = JSON.stringify(receivedSigningPackages, null, 2)
-          }
-          updatePeerSigningPackagesStatus()
-        } catch (err) {
-          appendOutput(`Error parsing received signing package: ${err.message}`)
-        }
-      }
+      processThresholdProtocolMessage(message)
     }
   })
 
@@ -1222,55 +1312,7 @@ const handleChatStream = async () => {
           }
           const message = toString(buffer.subarray())
           appendOutput(`Received: '${message.substring(0, 50)}${message.length > 50 ? '...' : ''}'`)
-
-          // Check if this is an AllMessage
-          if (message.startsWith('ALL_MESSAGE:')) {
-            const hexMessage = message.substring('ALL_MESSAGE:'.length)
-            try {
-              receivedAllMessage = hexToU8a('0x' + hexMessage)
-              appendOutput(`✓ AllMessage received and stored: ${receivedAllMessage.length} bytes`)
-            } catch (err) {
-              appendOutput(`Error parsing received AllMessage: ${err.message}`)
-            }
-          }
-          // Check if this is Round 1 commitments
-          else if (message.startsWith('ROUND1_COMMITMENTS:')) {
-            const hexCommitments = message.substring('ROUND1_COMMITMENTS:'.length)
-            try {
-              const commitmentsBytes = hexToU8a('0x' + hexCommitments)
-              const commitmentsArray = Array.from(commitmentsBytes)
-              receivedRound1Commitments.push(commitmentsArray)
-              appendOutput(`✓ Round 1 commitments received and stored: ${commitmentsArray.length} bytes`)
-              appendOutput(`✓ Total received commitments: ${receivedRound1Commitments.length}`)
-              window.thresholdSigningState.peerCommitments = receivedRound1Commitments.map(entry => [...entry])
-              const peerCommitmentsTextarea = document.getElementById('peer-round1-commitments')
-              if (peerCommitmentsTextarea) {
-                peerCommitmentsTextarea.value = JSON.stringify(receivedRound1Commitments, null, 2)
-              }
-              updatePeerRound1CommitmentsStatus()
-            } catch (err) {
-              appendOutput(`Error parsing received commitments: ${err.message}`)
-            }
-          }
-          // Check if this is a signing package
-          else if (message.startsWith('SIGNING_PACKAGE:')) {
-            const hexPackage = message.substring('SIGNING_PACKAGE:'.length)
-            try {
-              const packageBytes = hexToU8a('0x' + hexPackage)
-              const packageArray = Array.from(packageBytes)
-              receivedSigningPackages.push(packageArray)
-              appendOutput(`✓ Signing package received and stored: ${packageArray.length} bytes`)
-              appendOutput(`✓ Total received signing packages: ${receivedSigningPackages.length}`)
-              window.thresholdSigningState.peerSigningPackages = receivedSigningPackages.map(entry => [...entry])
-              const peerPackagesTextarea = document.getElementById('peer-signing-packages')
-              if (peerPackagesTextarea) {
-                peerPackagesTextarea.value = JSON.stringify(receivedSigningPackages, null, 2)
-              }
-              updatePeerSigningPackagesStatus()
-            } catch (err) {
-              appendOutput(`Error parsing received signing package: ${err.message}`)
-            }
-          }
+          processThresholdProtocolMessage(message)
         }
       })
     } catch (error) {
