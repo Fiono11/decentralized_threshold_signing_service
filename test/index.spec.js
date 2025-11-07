@@ -9,8 +9,6 @@ import { fileURLToPath } from 'url'
 
 // DOM Selectors
 const SELECTORS = {
-  messageInput: '#message',
-  sendButton: '#send',
   output: '#output',
   ss58AddressInput: '#ss58-address-input',
   secretKeyInput: '#secret-key-input',
@@ -153,7 +151,7 @@ test.describe('browser to browser example:', () => {
   })
 
   // Main Integration Test
-  test('should connect to another browser peer and send a message via SS58 addresses with permission', async ({ browser }) => {
+  test('should connect to another browser peer via SS58 addresses with permission', async ({ browser }) => {
     test.setTimeout(TIMEOUTS.mainTest)
 
     // Create two separate browser contexts (clients)
@@ -190,10 +188,6 @@ test.describe('browser to browser example:', () => {
 
     // Either we have the SS58 address in the log, or just the connection message
     expect(hasSS58InLog || hasConnectionMessage).toBeTruthy()
-
-    // Test bidirectional messaging
-    await sendMessage(pageA, pageB, 'hello B from A')
-    await sendMessage(pageB, pageA, 'hello A from B')
 
     // Cleanup browser contexts
     await contextA.close()
@@ -241,10 +235,6 @@ test.describe('browser to browser example:', () => {
     await expect(pageAOutput).toContainText('Connection challenge verified for peer:')
     await expect(pageAOutput).toContainText('Generated mutual challenge for peer:')
     await expect(pageAOutput).toContainText('Mutual connection challenge verified - connection established!')
-
-    // Test bidirectional messaging after proof of possession
-    await sendMessage(pageA, pageB, 'hello B from A after PoP')
-    await sendMessage(pageB, pageA, 'hello A from B after PoP')
 
     // Cleanup browser contexts
     await contextA.close()
@@ -299,19 +289,6 @@ test.describe('browser to browser example:', () => {
 })
 
 // Test Helper Functions
-
-// Message Communication Test
-const sendMessage = async (senderPage, recipientPage, message) => {
-  await senderPage.waitForSelector(SELECTORS.messageInput, { state: 'visible' })
-  await senderPage.fill(SELECTORS.messageInput, message)
-  await senderPage.click(SELECTORS.sendButton)
-
-  // Verify message was sent
-  await expect(senderPage.locator(SELECTORS.output)).toContainText(`Sending: '${message}'`)
-
-  // Verify message was received
-  await expect(recipientPage.locator(SELECTORS.output)).toContainText(`Received: '${message}'`)
-}
 
 // Relay Connection Verification
 const waitForRelayConnection = async (page) => {

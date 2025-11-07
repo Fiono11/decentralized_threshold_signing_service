@@ -83,15 +83,18 @@ This milestone establishes the foundational networking layer where two browsers 
 - ✅ Comprehensive automated tests using Playwright
 - ✅ Inline documentation and testing guide
 
-### 🚧 Milestone 2: Distributed Key Generation (PLANNED)
+### ✅ Milestone 2: Distributed Key Generation (COMPLETED)
 
-Two browsers will exchange messages and successfully produce a shared threshold public key using the Olaf DKG protocol compiled to WASM.
+Two browsers can exchange messages and successfully produce a shared threshold public key using the Olaf DKG protocol compiled to WASM.
 
-**Planned Deliverables**:
-- Rust to WebAssembly compilation of Olaf DKG protocol
-- Integration of DKG protocol with browser client
-- Shared threshold public key generation
-- Browser-local storage for key shares and protocol state
+#### Completed Features:
+- ✅ Rust to WebAssembly compilation of Olaf DKG protocol (SimplPedPoP)
+- ✅ Integration of DKG protocol with browser client
+- ✅ Shared threshold public key generation via AllMessage exchange
+- ✅ WASM functions for AllMessage generation and threshold key processing
+- ✅ Peer-to-peer AllMessage exchange via WebRTC
+- ✅ Threshold public key generation and verification
+- ✅ Comprehensive documentation and step-by-step guide
 
 ### 🚧 Milestone 3: Threshold Signature (PLANNED)
 
@@ -224,21 +227,70 @@ docker compose up -d
 5. **Autenticate the connection:**
    - Verify you see the message "Mutual connection proof of possession completed!" or "Mutual connection challenge verified - connection established!"
    - Both browser windows should show the peer connection in "Active Connections"
-   - The "Message" section should now be visible in both windows
 
-6. **Send a message from the first browser:**
-   - In the first browser window, type a message in the "Message" field
-   - Click "Send"
-   - Verify the message is received in the second browser window
-
-7. **Send a message from the second browser:**
-   - In the second browser window, type a different message
-   - Click "Send"
-   - Verify the message is received in first browser window
-
-8. **Shutdown the relay server:**
+6. **Shutdown the relay server:**
    - `Ctrl+C` in the relay server terminal (non Docker) or `docker compose stop relay-server` 
-   - Verify that both peers are still able to exchange messages
+   - Verify that both peers maintain their direct WebRTC connection
+
+### Threshold Key Generation Steps
+
+After establishing a peer-to-peer connection, each peer can participate in the distributed key generation (DKG) process to generate a shared threshold public key. The following steps must be performed by each peer in the threshold signing group:
+
+#### Prerequisites
+
+Before starting the threshold key generation process, ensure that:
+- Both peers have established a direct WebRTC connection with each other (see steps 1-5 above)
+
+#### Step-by-Step Process
+
+**For Peer 1 (First Browser - `http://localhost:5173`):**
+
+1. **Generate AllMessage:**
+   - In the "Threshold Signing (SimplPedPoP)" section, enter your secret key in the "Secret Key" field (e.g., `0x473a77675b8e77d90c1b6dc2dbe6ac533b0853790ea8bcadf0ee8b5da4cfbbce`)
+   - In the "Recipients" field, enter the SS58 addresses of all participants (including yourself), separated by commas (e.g., `5CXkZyy4S5b3w16wvKA2hUwzp5q2y7UtRPkXnW97QGvDN8Jw,5Gma8SNsn6rkQf9reAWFQ9WKq8bwwHtSzwMYtLTdhYsGPKiy`)
+   - Enter the threshold value (e.g., `2` for a 2-of-2 threshold)
+   - Click "Generate AllMessage"
+   - Verify you see: "✓ AllMessage generated successfully"
+   - The AllMessage will be displayed in hex format below the button
+
+2. **Send AllMessage to Peer 2:**
+   - Click "Send AllMessage to Connected Peer"
+   - Verify you see: "✓ AllMessage sent successfully to connected peer"
+   - The AllMessage is now sent to Peer 2 via the WebRTC connection
+
+3. **Receive AllMessage from Peer 2:**
+   - Wait for Peer 2 to send their AllMessage
+   - Verify you see: "✓ AllMessage received and stored" in the output log
+
+4. **Process AllMessages to Generate Threshold Key:**
+   - Once you have both your generated AllMessage and the received AllMessage from Peer 2, click "Process AllMessages (Generate Threshold Key)"
+   - Verify you see: "✓ Threshold key generated successfully"
+   - The threshold public key will be displayed in SS58 format in the UI
+   - Both peers should generate the same threshold public key
+
+**For Peer 2 (Second Browser - `http://localhost:5174`):**
+
+1. **Generate AllMessage:**
+   - In the "Threshold Signing (SimplPedPoP)" section, enter your secret key in the "Secret Key" field (e.g., `0xdb9ddbb3d6671c4de8248a4fba95f3d873dc21a0434b52951bb33730c1ac93d7`)
+   - In the "Recipients" field, enter the SS58 addresses of all participants (including yourself), separated by commas (e.g., `5CXkZyy4S5b3w16wvKA2hUwzp5q2y7UtRPkXnW97QGvDN8Jw,5Gma8SNsn6rkQf9reAWFQ9WKq8bwwHtSzwMYtLTdhYsGPKiy`)
+   - Enter the threshold value (e.g., `2` for a 2-of-2 threshold)
+   - The threshold value and recipient list must be identical for all peers
+   - Click "Generate AllMessage"
+   - Verify you see: "✓ AllMessage generated successfully"
+
+2. **Send AllMessage to Peer 1:**
+   - Click "Send AllMessage to Connected Peer"
+   - Verify you see: "✓ AllMessage sent successfully to connected peer"
+
+3. **Receive AllMessage from Peer 1:**
+   - Wait for Peer 1 to send their AllMessage
+   - Verify you see: "✓ AllMessage received and stored" in the output log
+
+4. **Process AllMessages to Generate Threshold Key:**
+   - Once you have both your generated AllMessage and the received AllMessage from Peer 1, click "Process AllMessages (Generate Threshold Key)"
+   - Verify you see: "✓ Threshold key generated successfully"
+   - The threshold public key will be displayed in SS58 format in the UI
+   - Verify that the threshold public key matches the one generated by Peer 1
 
 ### Cleanup
 
