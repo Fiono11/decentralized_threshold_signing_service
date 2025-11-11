@@ -3143,26 +3143,37 @@ window['run-round2-signing'].onclick = async () => {
     const defaultContext = EXTRINSIC_TEST_CONFIG.signingContext || 'substrate'
     const contextText = contextRaw || defaultContext
     const currentRound1Owner = window.cachedRound1Signing?.ownerAddress || null
+    const lastRound1Result = window.thresholdSigningState?.lastRound1 || null
 
     if (registeredAddress && currentRound1Owner && currentRound1Owner !== registeredAddress) {
       appendOutput(
-        `Round 1 signing artifacts belong to ${currentRound1Owner}, but registered address is ${registeredAddress}. Reloading cached data...`
+        `Round 1 signing artifacts currently loaded belong to ${currentRound1Owner}, but registered address is ${registeredAddress}. Please run Round 1 signing for the registered address before Round 2.`
       )
-      if (!hydrateRound1FromPolkadotCache(registeredAddress)) {
-        appendOutput(`Round 1 signing data not found for ${registeredAddress}. Please rerun Round 1 signing before Round 2.`)
-        return
-      }
+      return
     }
+
+    const cloneRound1Arrays = (value) => {
+      if (!Array.isArray(value)) {
+        return []
+      }
+      return value.map((entry) => (Array.isArray(entry) ? entry.slice() : entry))
+    }
+
     let hasRound1Arrays =
       Array.isArray(round1Nonces) &&
       round1Nonces.length > 0 &&
       Array.isArray(round1Commitments) &&
       round1Commitments.length > 0
 
-    if (!hasRound1Arrays) {
-      if (!hydrateRound1FromPolkadotCache(registeredAddress)) {
-        appendOutput('Round 1 signing data not found. Please run Round 1 signing before Round 2.')
-        return
+    if (!hasRound1Arrays && lastRound1Result) {
+      if (Array.isArray(lastRound1Result.signingNoncesArray) && lastRound1Result.signingNoncesArray.length > 0) {
+        round1Nonces = cloneRound1Arrays(lastRound1Result.signingNoncesArray)
+      }
+      if (
+        Array.isArray(lastRound1Result.signingCommitmentsArray) &&
+        lastRound1Result.signingCommitmentsArray.length > 0
+      ) {
+        round1Commitments = cloneRound1Arrays(lastRound1Result.signingCommitmentsArray)
       }
 
       hasRound1Arrays =
@@ -3170,21 +3181,10 @@ window['run-round2-signing'].onclick = async () => {
         round1Nonces.length > 0 &&
         Array.isArray(round1Commitments) &&
         round1Commitments.length > 0
-
-      if (!hasRound1Arrays) {
-        appendOutput('Round 1 signing data still unavailable after hydration. Please rerun Round 1 signing before Round 2.')
-        return
-      }
     }
 
-    if (
-      registeredAddress &&
-      window.cachedRound1Signing?.ownerAddress &&
-      window.cachedRound1Signing.ownerAddress !== registeredAddress
-    ) {
-      appendOutput(
-        `Round 1 signing data still does not match registered address ${registeredAddress}. Please rerun Round 1 signing before Round 2.`
-      )
+    if (!hasRound1Arrays) {
+      appendOutput('Round 1 signing data not found in this session. Please run Round 1 signing before Round 2.')
       return
     }
 
