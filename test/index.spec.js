@@ -19,9 +19,12 @@ const SELECTORS = {
 
 // Test data for WASM integration tests
 const TEST_RECIPIENTS = [
-  "5CXkZyy4S5b3w16wvKA2hUwzp5q2y7UtRPkXnW97QGvDN8Jw",
-  "5Gma8SNsn6rkQf9reAWFQ9WKq8bwwHtSzwMYtLTdhYsGPKiy"
+  '5CXkZyy4S5b3w16wvKA2hUwzp5q2y7UtRPkXnW97QGvDN8Jw',
+  '5Gma8SNsn6rkQf9reAWFQ9WKq8bwwHtSzwMYtLTdhYsGPKiy'
 ]
+
+const [TEST_SS58_ADDRESS_A, TEST_SS58_ADDRESS_B] = TEST_RECIPIENTS
+const PEER_SS58_ADDRESSES = Object.freeze([...TEST_RECIPIENTS])
 
 const TEST_SECRET_KEY_1 = "0x473a77675b8e77d90c1b6dc2dbe6ac533b0853790ea8bcadf0ee8b5da4cfbbce"
 const TEST_SECRET_KEY_2 = "0xdb9ddbb3d6671c4de8248a4fba95f3d873dc21a0434b52951bb33730c1ac93d7"
@@ -701,6 +704,9 @@ test.describe('Threshold Signing Rounds Tests:', () => {
     // First, generate threshold keys using SimplPedPoP
     const thresholdResults = await generateThresholdKeys(pageA, pageB)
 
+    const peerA = getPeerThresholdCacheEntry(thresholdResults, TEST_SS58_ADDRESS_A)
+    const peerB = getPeerThresholdCacheEntry(thresholdResults, TEST_SS58_ADDRESS_B)
+
     // Test Round 1 for participant 1
     const round1ResultA = await pageA.evaluate(({ signingKeypair }) => {
       const result = window.wasm_threshold_sign_round1(new Uint8Array(signingKeypair))
@@ -708,7 +714,7 @@ test.describe('Threshold Signing Rounds Tests:', () => {
         signingNonces: result.signing_nonces,
         signingCommitments: result.signing_commitments
       }
-    }, { signingKeypair: Array.from(thresholdResults.signingKeypair1) })
+    }, { signingKeypair: Array.from(peerA.signingKeypair) })
 
     // Test Round 1 for participant 2
     const round1ResultB = await pageB.evaluate(({ signingKeypair }) => {
@@ -717,7 +723,7 @@ test.describe('Threshold Signing Rounds Tests:', () => {
         signingNonces: result.signing_nonces,
         signingCommitments: result.signing_commitments
       }
-    }, { signingKeypair: Array.from(thresholdResults.signingKeypair2) })
+    }, { signingKeypair: Array.from(peerB.signingKeypair) })
 
     // Validate Round 1 results
     expect(round1ResultA.signingNonces).toBeTruthy()
@@ -772,19 +778,23 @@ test.describe('Threshold Signing Rounds Tests:', () => {
     const signingContext = 'test context for threshold signing'
     const payload = new TextEncoder().encode('test payload to sign with threshold signature')
 
+    const peerA = getPeerThresholdCacheEntry(thresholdResults, TEST_SS58_ADDRESS_A)
+    const peerB = getPeerThresholdCacheEntry(thresholdResults, TEST_SS58_ADDRESS_B)
+    const round1PeerA = round1Results.peers[TEST_SS58_ADDRESS_A]
+    const round1PeerB = round1Results.peers[TEST_SS58_ADDRESS_B]
+    const commitmentsJson = JSON.stringify([round1PeerA.commitments, round1PeerB.commitments])
+
     // Run Round 2 for participant 1
     const signingPackageA = await pageA.evaluate(({
       signingKeypair,
       signingNonces,
-      allCommitments,
+      commitmentsJson,
       sppOutputMessage,
       payload,
       signingContext
     }) => {
-      // Parse JSON commitments
-      const commitmentsArray = JSON.parse(allCommitments)
-      const commitmentsJson = JSON.stringify(commitmentsArray)
-      const commitmentsBytes = new TextEncoder().encode(commitmentsJson)
+      const commitmentsArray = JSON.parse(commitmentsJson)
+      const commitmentsBytes = new TextEncoder().encode(JSON.stringify(commitmentsArray))
 
       const result = window.wasm_threshold_sign_round2(
         new Uint8Array(signingKeypair),
@@ -796,10 +806,10 @@ test.describe('Threshold Signing Rounds Tests:', () => {
       )
       return Array.from(result)
     }, {
-      signingKeypair: Array.from(thresholdResults.signingKeypair1),
-      signingNonces: round1Results.noncesA,
-      allCommitments: JSON.stringify([round1Results.commitmentsA, round1Results.commitmentsB]),
-      sppOutputMessage: Array.from(thresholdResults.sppOutputMessage1),
+      signingKeypair: Array.from(peerA.signingKeypair),
+      signingNonces: round1PeerA.nonces,
+      commitmentsJson,
+      sppOutputMessage: Array.from(peerA.sppOutputMessage),
       payload: Array.from(payload),
       signingContext
     })
@@ -808,15 +818,13 @@ test.describe('Threshold Signing Rounds Tests:', () => {
     const signingPackageB = await pageB.evaluate(({
       signingKeypair,
       signingNonces,
-      allCommitments,
+      commitmentsJson,
       sppOutputMessage,
       payload,
       signingContext
     }) => {
-      // Parse JSON commitments
-      const commitmentsArray = JSON.parse(allCommitments)
-      const commitmentsJson = JSON.stringify(commitmentsArray)
-      const commitmentsBytes = new TextEncoder().encode(commitmentsJson)
+      const commitmentsArray = JSON.parse(commitmentsJson)
+      const commitmentsBytes = new TextEncoder().encode(JSON.stringify(commitmentsArray))
 
       const result = window.wasm_threshold_sign_round2(
         new Uint8Array(signingKeypair),
@@ -828,10 +836,10 @@ test.describe('Threshold Signing Rounds Tests:', () => {
       )
       return Array.from(result)
     }, {
-      signingKeypair: Array.from(thresholdResults.signingKeypair2),
-      signingNonces: round1Results.noncesB,
-      allCommitments: JSON.stringify([round1Results.commitmentsA, round1Results.commitmentsB]),
-      sppOutputMessage: Array.from(thresholdResults.sppOutputMessage2),
+      signingKeypair: Array.from(peerB.signingKeypair),
+      signingNonces: round1PeerB.nonces,
+      commitmentsJson,
+      sppOutputMessage: Array.from(peerB.sppOutputMessage),
       payload: Array.from(payload),
       signingContext
     })
@@ -1058,27 +1066,99 @@ async function generateThresholdKeys(pageA, pageB) {
   const __dirname = dirname(__filename)
   const cacheFilePath = join(__dirname, 'threshold-keys-cache.json')
 
-  // Try to load cached threshold keys
-  if (existsSync(cacheFilePath)) {
+  const normalizePeerEntry = (address, entry) => {
+    if (!entry || typeof entry !== 'object') {
+      return null
+    }
+    const { thresholdPublicKey, sppOutputMessage, signingKeypair } = entry
+    const isByteArray = (value) => Array.isArray(value) && value.every((byte) => Number.isInteger(byte) && byte >= 0 && byte <= 255)
+    if (!isByteArray(thresholdPublicKey) || !isByteArray(sppOutputMessage) || !isByteArray(signingKeypair)) {
+      console.warn(`threshold-keys-cache.json peer entry for ${address} is invalid`)
+      return null
+    }
+    return {
+      thresholdPublicKey,
+      sppOutputMessage,
+      signingKeypair
+    }
+  }
+
+  const loadCachedThresholdKeys = () => {
+    if (!existsSync(cacheFilePath)) {
+      return null
+    }
+
     try {
       console.log('Loading cached threshold keys from:', cacheFilePath)
       const cachedData = JSON.parse(readFileSync(cacheFilePath, 'utf-8'))
 
-      // Validate cached data structure
+      if (cachedData && typeof cachedData === 'object' && cachedData.peers) {
+        const peers = {}
+        for (const address of PEER_SS58_ADDRESSES) {
+          const normalized = normalizePeerEntry(address, cachedData.peers[address])
+          if (!normalized) {
+            return null
+          }
+          peers[address] = normalized
+        }
+
+        const sharedThreshold = cachedData.thresholdPublicKey ||
+          cachedData.peers[PEER_SS58_ADDRESSES[0]]?.thresholdPublicKey
+
+        if (!Array.isArray(sharedThreshold)) {
+          console.warn('threshold-keys-cache.json missing shared thresholdPublicKey; ignoring cache')
+          return null
+        }
+
+        console.log('✓ Using cached threshold keys')
+        const result = {
+          thresholdPublicKey: sharedThreshold,
+          peers
+        }
+
+        if (cachedData.polkadotRound1) {
+          result.polkadotRound1 = cachedData.polkadotRound1
+        }
+
+        return result
+      }
+
+      // Backwards compatibility for legacy schema
       if (cachedData.thresholdPublicKey1 &&
         cachedData.thresholdPublicKey2 &&
         cachedData.sppOutputMessage1 &&
         cachedData.sppOutputMessage2 &&
         cachedData.signingKeypair1 &&
         cachedData.signingKeypair2) {
-        console.log('✓ Using cached threshold keys')
-        return cachedData
-      } else {
-        console.log('⚠️  Cached data structure invalid, regenerating...')
+        console.log('✓ Using cached threshold keys (legacy schema detected, will migrate on save)')
+        return {
+          thresholdPublicKey: cachedData.thresholdPublicKey1,
+          peers: {
+            [TEST_SS58_ADDRESS_A]: {
+              thresholdPublicKey: cachedData.thresholdPublicKey1,
+              sppOutputMessage: cachedData.sppOutputMessage1,
+              signingKeypair: cachedData.signingKeypair1
+            },
+            [TEST_SS58_ADDRESS_B]: {
+              thresholdPublicKey: cachedData.thresholdPublicKey2,
+              sppOutputMessage: cachedData.sppOutputMessage2,
+              signingKeypair: cachedData.signingKeypair2
+            }
+          },
+          polkadotRound1: cachedData.polkadotRound1
+        }
       }
+
+      console.log('⚠️  Cached data structure invalid, regenerating...')
     } catch (error) {
       console.log('⚠️  Error loading cache, regenerating:', error.message)
     }
+    return null
+  }
+
+  const cachedThresholdKeys = loadCachedThresholdKeys()
+  if (cachedThresholdKeys) {
+    return cachedThresholdKeys
   }
 
   // Generate new threshold keys if cache doesn't exist or is invalid
@@ -1154,34 +1234,70 @@ async function generateThresholdKeys(pageA, pageB) {
     throw new Error('Threshold keys do not match!')
   }
 
+  let existingRound1Cache = null
+  if (existsSync(cacheFilePath)) {
+    try {
+      const existingCache = JSON.parse(readFileSync(cacheFilePath, 'utf-8'))
+      if (existingCache?.polkadotRound1) {
+        existingRound1Cache = existingCache.polkadotRound1
+      }
+    } catch (error) {
+      console.log('⚠️  Unable to read existing Round 1 cache during key generation:', error.message)
+    }
+  }
+
   const thresholdResults = {
-    thresholdPublicKey1: resultA.thresholdPublicKey,
-    thresholdPublicKey2: resultB.thresholdPublicKey,
-    sppOutputMessage1: resultA.sppOutputMessage,
-    sppOutputMessage2: resultB.sppOutputMessage,
-    signingKeypair1: resultA.signingKeypair,
-    signingKeypair2: resultB.signingKeypair
+    thresholdPublicKey: resultA.thresholdPublicKey,
+    peers: {
+      [TEST_SS58_ADDRESS_A]: {
+        thresholdPublicKey: resultA.thresholdPublicKey,
+        sppOutputMessage: resultA.sppOutputMessage,
+        signingKeypair: resultA.signingKeypair
+      },
+      [TEST_SS58_ADDRESS_B]: {
+        thresholdPublicKey: resultB.thresholdPublicKey,
+        sppOutputMessage: resultB.sppOutputMessage,
+        signingKeypair: resultB.signingKeypair
+      }
+    }
   }
 
   // Save to cache file
   try {
-    writeFileSync(cacheFilePath, JSON.stringify(thresholdResults, null, 2), 'utf-8')
+    const thresholdCachePayload = existingRound1Cache
+      ? { ...thresholdResults, polkadotRound1: existingRound1Cache }
+      : thresholdResults
+
+    writeFileSync(cacheFilePath, JSON.stringify(thresholdCachePayload, null, 2), 'utf-8')
     console.log('✓ Threshold keys cached to:', cacheFilePath)
   } catch (error) {
     console.warn('⚠️  Failed to save cache:', error.message)
   }
 
-  return thresholdResults
+  return existingRound1Cache
+    ? { ...thresholdResults, polkadotRound1: existingRound1Cache }
+    : thresholdResults
+}
+
+const getPeerThresholdCacheEntry = (thresholdResults, address) => {
+  const peers = thresholdResults?.peers
+  if (!peers || !peers[address]) {
+    throw new Error(`Missing threshold cache entry for peer ${address}`)
+  }
+  return peers[address]
 }
 
 async function runRound1(pageA, pageB, thresholdResults) {
+  const peerA = getPeerThresholdCacheEntry(thresholdResults, TEST_SS58_ADDRESS_A)
+  const peerB = getPeerThresholdCacheEntry(thresholdResults, TEST_SS58_ADDRESS_B)
+
   const round1ResultA = await pageA.evaluate(({ signingKeypair }) => {
     const result = window.wasm_threshold_sign_round1(new Uint8Array(signingKeypair))
     return {
       signingNonces: result.signing_nonces,
       signingCommitments: result.signing_commitments
     }
-  }, { signingKeypair: Array.from(thresholdResults.signingKeypair1) })
+  }, { signingKeypair: Array.from(peerA.signingKeypair) })
 
   const round1ResultB = await pageB.evaluate(({ signingKeypair }) => {
     const result = window.wasm_threshold_sign_round1(new Uint8Array(signingKeypair))
@@ -1189,28 +1305,161 @@ async function runRound1(pageA, pageB, thresholdResults) {
       signingNonces: result.signing_nonces,
       signingCommitments: result.signing_commitments
     }
-  }, { signingKeypair: Array.from(thresholdResults.signingKeypair2) })
+  }, { signingKeypair: Array.from(peerB.signingKeypair) })
+
+  const noncesA = JSON.parse(round1ResultA.signingNonces)
+  const commitmentsA = JSON.parse(round1ResultA.signingCommitments)
+  const noncesB = JSON.parse(round1ResultB.signingNonces)
+  const commitmentsB = JSON.parse(round1ResultB.signingCommitments)
 
   return {
-    noncesA: JSON.parse(round1ResultA.signingNonces),
-    commitmentsA: JSON.parse(round1ResultA.signingCommitments),
-    noncesB: JSON.parse(round1ResultB.signingNonces),
-    commitmentsB: JSON.parse(round1ResultB.signingCommitments)
+    peers: {
+      [TEST_SS58_ADDRESS_A]: {
+        signingKeypair: Array.from(peerA.signingKeypair),
+        nonces: noncesA,
+        commitments: commitmentsA
+      },
+      [TEST_SS58_ADDRESS_B]: {
+        signingKeypair: Array.from(peerB.signingKeypair),
+        nonces: noncesB,
+        commitments: commitmentsB
+      }
+    }
+  }
+}
+
+async function getPolkadotRound1SigningData(pageA, pageB, thresholdResults) {
+  const __filename = fileURLToPath(import.meta.url)
+  const __dirname = dirname(__filename)
+  const cacheFilePath = join(__dirname, 'polkadot-round1-cache.json')
+
+  const toArray = (value) => Array.isArray(value) ? value : Array.from(value)
+  const arraysEqual = (a, b) => Array.isArray(a) && Array.isArray(b) &&
+    a.length === b.length && a.every((value, index) => value === b[index])
+  const isByteArray = (value) =>
+    Array.isArray(value) &&
+    value.every((byte) => Number.isInteger(byte) && byte >= 0 && byte <= 255)
+
+  const thresholdPeerA = getPeerThresholdCacheEntry(thresholdResults, TEST_SS58_ADDRESS_A)
+  const thresholdPeerB = getPeerThresholdCacheEntry(thresholdResults, TEST_SS58_ADDRESS_B)
+
+  const signingKeypair1Array = toArray(thresholdPeerA.signingKeypair)
+  const signingKeypair2Array = toArray(thresholdPeerB.signingKeypair)
+
+  const normalizeRound1PeerEntry = (address, entry) => {
+    if (!entry || typeof entry !== 'object') {
+      return null
+    }
+    const { signingKeypair, nonces, commitments } = entry
+    if (!isByteArray(signingKeypair) || !isByteArray(nonces) || !isByteArray(commitments)) {
+      console.warn(`polkadotRound1 cache entry for ${address} is invalid`)
+      return null
+    }
+    return {
+      signingKeypair: Array.from(signingKeypair),
+      nonces: Array.from(nonces),
+      commitments: Array.from(commitments)
+    }
+  }
+
+  if (existsSync(cacheFilePath)) {
+    try {
+      const cachedData = JSON.parse(readFileSync(cacheFilePath, 'utf-8'))
+      if (cachedData && typeof cachedData === 'object' && cachedData.peers) {
+        console.log('Loading cached Round 1 signing data for Polkadot test from:', cacheFilePath)
+
+        const cachedPeerA = normalizeRound1PeerEntry(TEST_SS58_ADDRESS_A, cachedData.peers[TEST_SS58_ADDRESS_A])
+        const cachedPeerB = normalizeRound1PeerEntry(TEST_SS58_ADDRESS_B, cachedData.peers[TEST_SS58_ADDRESS_B])
+
+        if (
+          cachedPeerA &&
+          cachedPeerB &&
+          arraysEqual(cachedPeerA.signingKeypair, signingKeypair1Array) &&
+          arraysEqual(cachedPeerB.signingKeypair, signingKeypair2Array)
+        ) {
+          console.log('✓ Using cached Round 1 signing data for Polkadot test')
+          return {
+            peers: {
+              [TEST_SS58_ADDRESS_A]: {
+                signingKeypair: signingKeypair1Array,
+                nonces: Array.from(cachedPeerA.nonces),
+                commitments: Array.from(cachedPeerA.commitments)
+              },
+              [TEST_SS58_ADDRESS_B]: {
+                signingKeypair: signingKeypair2Array,
+                nonces: Array.from(cachedPeerB.nonces),
+                commitments: Array.from(cachedPeerB.commitments)
+              }
+            }
+          }
+        }
+
+        console.log('⚠️  Cached Round 1 data invalid or mismatched, regenerating...')
+      }
+    } catch (error) {
+      console.log('⚠️  Error loading Round 1 cache, regenerating:', error.message)
+    }
+  }
+
+  console.log('Generating new Round 1 signing data for Polkadot test...')
+  const round1Results = await runRound1(pageA, pageB, thresholdResults)
+
+  const round1CachePayload = {
+    peers: {
+      [TEST_SS58_ADDRESS_A]: {
+        signingKeypair: signingKeypair1Array,
+        nonces: Array.from(round1Results.peers[TEST_SS58_ADDRESS_A].nonces),
+        commitments: Array.from(round1Results.peers[TEST_SS58_ADDRESS_A].commitments)
+      },
+      [TEST_SS58_ADDRESS_B]: {
+        signingKeypair: signingKeypair2Array,
+        nonces: Array.from(round1Results.peers[TEST_SS58_ADDRESS_B].nonces),
+        commitments: Array.from(round1Results.peers[TEST_SS58_ADDRESS_B].commitments)
+      }
+    }
+  }
+
+  try {
+    writeFileSync(cacheFilePath, JSON.stringify(round1CachePayload, null, 2), 'utf-8')
+    console.log('✓ Round 1 signing data cached to:', cacheFilePath)
+  } catch (error) {
+    console.warn('⚠️  Failed to save Round 1 cache:', error.message)
+  }
+
+  return {
+    peers: {
+      [TEST_SS58_ADDRESS_A]: {
+        signingKeypair: signingKeypair1Array,
+        nonces: Array.from(round1Results.peers[TEST_SS58_ADDRESS_A].nonces),
+        commitments: Array.from(round1Results.peers[TEST_SS58_ADDRESS_A].commitments)
+      },
+      [TEST_SS58_ADDRESS_B]: {
+        signingKeypair: signingKeypair2Array,
+        nonces: Array.from(round1Results.peers[TEST_SS58_ADDRESS_B].nonces),
+        commitments: Array.from(round1Results.peers[TEST_SS58_ADDRESS_B].commitments)
+      }
+    }
   }
 }
 
 async function runRound2(pageA, pageB, thresholdResults, round1Results, payload, context) {
+  const peerA = getPeerThresholdCacheEntry(thresholdResults, TEST_SS58_ADDRESS_A)
+  const peerB = getPeerThresholdCacheEntry(thresholdResults, TEST_SS58_ADDRESS_B)
+  const round1PeerA = round1Results.peers[TEST_SS58_ADDRESS_A]
+  const round1PeerB = round1Results.peers[TEST_SS58_ADDRESS_B]
+
+  const commitmentsPayload = JSON.stringify([round1PeerA.commitments, round1PeerB.commitments])
+
   const signingPackageA = await pageA.evaluate(({
     signingKeypair,
     signingNonces,
-    allCommitments,
+    commitmentsJson,
     sppOutputMessage,
     payload,
     context
   }) => {
-    const commitmentsArray = JSON.parse(allCommitments)
-    const commitmentsJson = JSON.stringify(commitmentsArray)
-    const commitmentsBytes = new TextEncoder().encode(commitmentsJson)
+    const commitmentsArray = JSON.parse(commitmentsJson)
+    const commitmentsBytes = new TextEncoder().encode(JSON.stringify(commitmentsArray))
 
     const result = window.wasm_threshold_sign_round2(
       new Uint8Array(signingKeypair),
@@ -1222,10 +1471,10 @@ async function runRound2(pageA, pageB, thresholdResults, round1Results, payload,
     )
     return Array.from(result)
   }, {
-    signingKeypair: Array.from(thresholdResults.signingKeypair1),
-    signingNonces: round1Results.noncesA,
-    allCommitments: JSON.stringify([round1Results.commitmentsA, round1Results.commitmentsB]),
-    sppOutputMessage: Array.from(thresholdResults.sppOutputMessage1),
+    signingKeypair: Array.from(peerA.signingKeypair),
+    signingNonces: round1PeerA.nonces,
+    commitmentsJson: commitmentsPayload,
+    sppOutputMessage: Array.from(peerA.sppOutputMessage),
     payload: Array.from(payload),
     context
   })
@@ -1233,14 +1482,13 @@ async function runRound2(pageA, pageB, thresholdResults, round1Results, payload,
   const signingPackageB = await pageB.evaluate(({
     signingKeypair,
     signingNonces,
-    allCommitments,
+    commitmentsJson,
     sppOutputMessage,
     payload,
     context
   }) => {
-    const commitmentsArray = JSON.parse(allCommitments)
-    const commitmentsJson = JSON.stringify(commitmentsArray)
-    const commitmentsBytes = new TextEncoder().encode(commitmentsJson)
+    const commitmentsArray = JSON.parse(commitmentsJson)
+    const commitmentsBytes = new TextEncoder().encode(JSON.stringify(commitmentsArray))
 
     const result = window.wasm_threshold_sign_round2(
       new Uint8Array(signingKeypair),
@@ -1252,10 +1500,10 @@ async function runRound2(pageA, pageB, thresholdResults, round1Results, payload,
     )
     return Array.from(result)
   }, {
-    signingKeypair: Array.from(thresholdResults.signingKeypair2),
-    signingNonces: round1Results.noncesB,
-    allCommitments: JSON.stringify([round1Results.commitmentsA, round1Results.commitmentsB]),
-    sppOutputMessage: Array.from(thresholdResults.sppOutputMessage2),
+    signingKeypair: Array.from(peerB.signingKeypair),
+    signingNonces: round1PeerB.nonces,
+    commitmentsJson: commitmentsPayload,
+    sppOutputMessage: Array.from(peerB.sppOutputMessage),
     payload: Array.from(payload),
     context
   })
@@ -1364,6 +1612,12 @@ test.describe('Polkadot API Integration with Threshold Signing:', () => {
     const thresholdResults = await generateThresholdKeys(pageA, pageB)
 
     // Step 2: Use threshold public key to sign a Polkadot extrinsic
+    const round1Results = await getPolkadotRound1SigningData(pageA, pageB, thresholdResults)
+    const thresholdPeerA = getPeerThresholdCacheEntry(thresholdResults, TEST_SS58_ADDRESS_A)
+    const thresholdPeerB = getPeerThresholdCacheEntry(thresholdResults, TEST_SS58_ADDRESS_B)
+    const round1PeerA = round1Results.peers[TEST_SS58_ADDRESS_A]
+    const round1PeerB = round1Results.peers[TEST_SS58_ADDRESS_B]
+
     const result = await pageA.evaluate(async ({
       secretKey1,
       secretKey2,
@@ -1373,7 +1627,11 @@ test.describe('Polkadot API Integration with Threshold Signing:', () => {
       sppOutputMessage1,
       sppOutputMessage2,
       signingKeypair1,
-      signingKeypair2
+      signingKeypair2,
+      signingNonces1,
+      signingNonces2,
+      signingCommitments1,
+      signingCommitments2
     }) => {
       // Import Polkadot API from CDN (works in browser context)
       const { ApiPromise, WsProvider } = await import('https://esm.sh/@polkadot/api@latest')
@@ -1464,16 +1722,17 @@ test.describe('Polkadot API Integration with Threshold Signing:', () => {
         console.log('Signable payload (hex):', signableHex.substring(0, 100) + '...')
 
         // 8. Use threshold signing protocol to sign the payload
-        // Step 8a: Round 1 signing for both participants
-        const round1Result1 = window.wasm_threshold_sign_round1(new Uint8Array(signingKeypair1))
-        const round1Result2 = window.wasm_threshold_sign_round1(new Uint8Array(signingKeypair2))
+        // Step 8a: Round 1 signing data (cached or freshly generated)
+        const nonces1 = signingNonces1
+        const commitments1 = signingCommitments1
+        const nonces2 = signingNonces2
+        const commitments2 = signingCommitments2
 
-        const nonces1 = JSON.parse(round1Result1.signing_nonces)
-        const commitments1 = JSON.parse(round1Result1.signing_commitments)
-        const nonces2 = JSON.parse(round1Result2.signing_nonces)
-        const commitments2 = JSON.parse(round1Result2.signing_commitments)
-
-        console.log('Round 1 completed for both participants')
+        console.log('Round 1 signing data ready for both participants')
+        console.log('Signing nonces (participant 1):', JSON.stringify(nonces1))
+        console.log('Signing commitments (participant 1):', JSON.stringify(commitments1))
+        console.log('Signing nonces (participant 2):', JSON.stringify(nonces2))
+        console.log('Signing commitments (participant 2):', JSON.stringify(commitments2))
 
         // Step 8b: Round 2 signing for both participants
         const commitmentsArray = [commitments1, commitments2]
@@ -1512,6 +1771,13 @@ test.describe('Polkadot API Integration with Threshold Signing:', () => {
         ]
         const signingPackagesJson = JSON.stringify(signingPackagesArray)
         const signingPackagesBytes = new TextEncoder().encode(signingPackagesJson)
+        console.log('Signing packages JSON:', signingPackagesJson)
+        console.log('Signing packages bytes length:', signingPackagesBytes.length)
+        console.log(
+          'Signing packages bytes (hex preview):',
+          u8aToHex(signingPackagesBytes.slice(0, Math.min(signingPackagesBytes.length, 64))) +
+          (signingPackagesBytes.length > 64 ? '…' : '')
+        )
 
         const aggregatedSignature = window.wasm_aggregate_threshold_signature(signingPackagesBytes)
 
@@ -1536,14 +1802,25 @@ test.describe('Polkadot API Integration with Threshold Signing:', () => {
 
         // Use addSignature() method to properly attach the signature to the extrinsic
         // This is the correct way to manually sign an extrinsic in Polkadot API
+        const signerPayload = {
+          era,
+          nonce,
+          tip: '0'
+        }
+
+        console.log('accountId32 (hex):', accountId32.toHex())
+        console.log('accountId32 (SS58):', accountId32.toHuman())
+        console.log('MultiSignature (Sr25519, hex):', u8aToHex(aggregatedSignature))
+        console.log('Signer payload:', {
+          era: typeof signerPayload.era?.toHex === 'function' ? signerPayload.era.toHex() : String(signerPayload.era),
+          nonce: typeof signerPayload.nonce?.toString === 'function' ? signerPayload.nonce.toString() : String(signerPayload.nonce),
+          tip: signerPayload.tip
+        })
+
         const signedExtrinsic = remark.addSignature(
           accountId32,
           signatureType,
-          {
-            era: era,
-            nonce: nonce,
-            tip: '0'
-          }
+          signerPayload
         )
 
         // 10. Now you have the final signed extrinsic
@@ -1658,11 +1935,15 @@ test.describe('Polkadot API Integration with Threshold Signing:', () => {
       secretKey2: TEST_SECRET_KEY_2,
       recipients: TEST_RECIPIENTS,
       threshold: 2,
-      thresholdPublicKey: thresholdResults.thresholdPublicKey1,
-      sppOutputMessage1: thresholdResults.sppOutputMessage1,
-      sppOutputMessage2: thresholdResults.sppOutputMessage2,
-      signingKeypair1: thresholdResults.signingKeypair1,
-      signingKeypair2: thresholdResults.signingKeypair2
+      thresholdPublicKey: thresholdResults.thresholdPublicKey,
+      sppOutputMessage1: thresholdPeerA.sppOutputMessage,
+      sppOutputMessage2: thresholdPeerB.sppOutputMessage,
+      signingKeypair1: thresholdPeerA.signingKeypair,
+      signingKeypair2: thresholdPeerB.signingKeypair,
+      signingNonces1: round1PeerA.nonces,
+      signingNonces2: round1PeerB.nonces,
+      signingCommitments1: round1PeerA.commitments,
+      signingCommitments2: round1PeerB.commitments
     })
 
     // Validate results

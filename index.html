@@ -265,7 +265,7 @@
             <button type="button" id="store-all-message">Store AllMessage in Relay</button>
             <button type="button" id="process-all-messages">Process AllMessages (Generate Threshold Key)</button>
           </div>
-          <div id="round1-signing-actions" style="margin-top: 10px; display: none;">
+          <div id="round1-signing-actions" style="margin-top: 10px;">
             <h3>Round 1 Signing</h3>
             <label for="round1-context-input">Context (optional):</label>
             <input type="text" id="round1-context-input" placeholder="Enter context for signing (default: empty)"
@@ -275,27 +275,15 @@
               Peer</button>
             <div id="round1-output" style="margin-top: 10px; font-family: monospace; word-break: break-all;"></div>
           </div>
-          <div id="round2-signing-actions" style="margin-top: 10px; display: none;">
+          <div id="round2-signing-actions" style="margin-top: 10px;">
             <h3>Round 2 Signing</h3>
-            <p style="color: #d9534f; font-size: 12px; margin-bottom: 10px;">
-              <strong>⚠️ Important:</strong> All participants must use the <strong>exact same payload and
-                context</strong> for aggregation to work!
-            </p>
             <label for="round2-payload-input">Payload to Sign:</label>
-            <input type="text" id="round2-payload-input" placeholder="Enter message to sign"
-              value="test payload to sign with threshold signature" />
-            <label for="round2-context-input">Context:</label>
-            <input type="text" id="round2-context-input" placeholder="Enter context for signing"
-              value="test context for threshold signing" />
+            <textarea id="round2-payload-input" rows="3"
+              placeholder="Enter the payload to sign (hex or UTF-8 text)">test payload to sign with threshold signature</textarea>
+            <label for="round2-context-input">Context (optional, default: substrate):</label>
+            <input type="text" id="round2-context-input" placeholder="Enter signing context (default: substrate)" />
             <button type="button" id="run-round2-signing">Run Round 2 Signing</button>
             <div id="round2-output" style="margin-top: 10px; font-family: monospace; word-break: break-all;"></div>
-          </div>
-          <div id="signing-package-actions" style="margin-top: 10px; display: none;">
-            <h3>Signing Package Actions</h3>
-            <button type="button" id="send-signing-package">Send Signing Package to Connected Peer</button>
-            <button type="button" id="aggregate-signatures">Aggregate Signatures</button>
-            <div id="signing-package-output" style="margin-top: 10px; font-family: monospace; word-break: break-all;">
-            </div>
           </div>
         </form>
       </section>
@@ -325,12 +313,21 @@
         </div>
       </section>
 
+      <!-- Test Output Section -->
+      <section class="section" aria-label="Test output controls">
+        <h2>🧪 Agregate Signing Packages</h2>
+        <p>Send a quick test message to verify the output log is responsive.</p>
+        <button type="button" id="agregate-signing-packages" aria-label="Agregate Signing Packages">
+          Agregate Signing Packages
+        </button>
+      </section>
+
       <!-- Debug Utilities Section -->
       <section class="section" aria-label="Debug utilities">
-        <h2>🛠️ Debug Utilities</h2>
+        <h2>🛠️ Construct and Submit the Signed Extrinsic</h2>
         <p>Use this to quickly verify that output logging is working as expected.</p>
-        <button type="button" id="log-debug-message" aria-label="Log a debug message to the output log">
-          Log Debug Message
+        <button type="button" id="submit-extrinsic" aria-label="Construct and submit the signed extrinsic">
+          Submit Signed Extrinsic
         </button>
       </section>
 
