@@ -182,6 +182,337 @@ const concatRecipientPublicKeys = (recipients) => {
   return { concatenated, publicKeyBytes }
 }
 
+// Persistence Helpers
+const STORAGE_KEY_PREFIX = 'thresholdSigning:user'
+const STORAGE_VERSION = 1
+const STORAGE_FALLBACK_ADDRESS = 'anonymous'
+
+const getStorageKeyForAddress = (address) => {
+  const suffix = typeof address === 'string' && address.trim().length > 0 ? address.trim() : STORAGE_FALLBACK_ADDRESS
+  return `${STORAGE_KEY_PREFIX}:${suffix}`
+}
+
+const loadPersistedUserState = (address) => {
+  if (typeof window === 'undefined' || !window.localStorage) {
+    return null
+  }
+
+  const key = getStorageKeyForAddress(address)
+  try {
+    const raw = window.localStorage.getItem(key)
+    if (!raw) {
+      return null
+    }
+
+    const parsed = JSON.parse(raw)
+    if (!parsed || parsed.version !== STORAGE_VERSION || typeof parsed.data !== 'object' || parsed.data === null) {
+      return null
+    }
+
+    return parsed.data
+  } catch (error) {
+    console.warn('Failed to load persisted threshold signing state:', error)
+    return null
+  }
+}
+
+const writePersistedUserState = (address, data) => {
+  if (typeof window === 'undefined' || !window.localStorage) {
+    return false
+  }
+
+  const key = getStorageKeyForAddress(address)
+  try {
+    const payload = JSON.stringify({
+      version: STORAGE_VERSION,
+      updatedAt: Date.now(),
+      data
+    })
+    window.localStorage.setItem(key, payload)
+    return true
+  } catch (error) {
+    console.warn('Failed to persist threshold signing state:', error)
+    return false
+  }
+}
+
+const mergePersistedUserState = (address, updates) => {
+  if (!updates || typeof updates !== 'object') {
+    return null
+  }
+
+  const current = loadPersistedUserState(address) || {}
+  const next = { ...current, ...updates }
+  writePersistedUserState(address, next)
+  return next
+}
+
+const encodeBytesForStorage = (value) => {
+  if (!value) {
+    return null
+  }
+  if (value instanceof Uint8Array) {
+    return toHexString(value, { withPrefix: true })
+  }
+  if (Array.isArray(value)) {
+    return toHexString(Uint8Array.from(value), { withPrefix: true })
+  }
+  if (typeof value === 'string') {
+    const normalized = normalizeHexString(value)
+    return normalized
+  }
+  return null
+}
+
+const decodeStoredHexToBytes = (value) => {
+  if (typeof value !== 'string') {
+    return null
+  }
+  const normalized = normalizeHexString(value)
+  if (!normalized) {
+    return null
+  }
+  try {
+    return hexToU8a(normalized)
+  } catch (error) {
+    console.warn('Failed to decode stored hex value:', error)
+    return null
+  }
+}
+
+const updateGeneratedAllMessageUi = (bytes, hexString) => {
+  const outputDiv = document.getElementById('all-message-output')
+  if (outputDiv && bytes instanceof Uint8Array) {
+    const hex = typeof hexString === 'string' && hexString.length > 0 ? hexString : toHexString(bytes)
+    const displayHex = hex.startsWith('0x') ? hex.slice(2) : hex
+    outputDiv.textContent = `AllMessage (${bytes.length} bytes): ${displayHex}`
+  }
+  const actionsDiv = document.getElementById('all-message-actions')
+  if (actionsDiv) {
+    actionsDiv.style.display = 'block'
+  }
+}
+
+const persistGeneratedAllMessage = (generation) => {
+  if (!generation || !(generation.allMessage instanceof Uint8Array)) {
+    return
+  }
+
+  const address = sessionState?.mySS58Address
+  const storedHex = encodeBytesForStorage(generation.allMessage)
+  if (!storedHex) {
+    return
+  }
+
+  const metadata = {
+    hex: storedHex,
+    threshold: typeof generation.threshold === 'number' ? generation.threshold : null,
+    recipients: Array.isArray(generation.recipients) ? generation.recipients.slice() : null,
+    storedAt: Date.now()
+  }
+
+  mergePersistedUserState(address, { generatedAllMessage: metadata })
+  appendOutput('Saved generated AllMessage to browser storage.')
+}
+
+const persistReceivedAllMessage = (messageBytes) => {
+  if (!(messageBytes instanceof Uint8Array)) {
+    return
+  }
+
+  const address = sessionState?.mySS58Address
+  const storedHex = encodeBytesForStorage(messageBytes)
+  if (!storedHex) {
+    return
+  }
+
+  const metadata = {
+    hex: storedHex,
+    storedAt: Date.now()
+  }
+
+  mergePersistedUserState(address, { receivedAllMessage: metadata })
+  appendOutput('Saved received AllMessage to browser storage.')
+}
+
+const setThresholdProcessingState = (processing) => {
+  if (!processing) {
+    return null
+  }
+
+  const ensureUint8Array = (value) => {
+    if (!value) {
+      return null
+    }
+    if (value instanceof Uint8Array) {
+      return new Uint8Array(value)
+    }
+    if (Array.isArray(value)) {
+      return Uint8Array.from(value)
+    }
+    return null
+  }
+
+  const thresholdPublicKeyBytes =
+    ensureUint8Array(processing.thresholdPublicKey) || ensureUint8Array(processing.thresholdPublicKeyArray)
+  if (!thresholdPublicKeyBytes) {
+    return null
+  }
+
+  const signingKeypairBytes =
+    ensureUint8Array(processing.signingKeypair) || ensureUint8Array(processing.signingKeypairArray)
+  const sppOutputMessageBytes =
+    ensureUint8Array(processing.sppOutputMessage) || ensureUint8Array(processing.sppOutputMessageArray)
+
+  const thresholdPublicKeyHex = processing.thresholdPublicKeyHex || toHexString(thresholdPublicKeyBytes)
+  const signingKeypairHex = processing.signingKeypairHex || (signingKeypairBytes && toHexString(signingKeypairBytes))
+  const sppOutputMessageHex = processing.sppOutputMessageHex || (sppOutputMessageBytes && toHexString(sppOutputMessageBytes))
+
+  const thresholdPublicKeySS58 =
+    processing.thresholdPublicKeySS58 || encodeAddress(thresholdPublicKeyBytes, 42)
+
+  const normalizedProcessing = {
+    ...processing,
+    thresholdPublicKey: thresholdPublicKeyBytes,
+    thresholdPublicKeyArray: Array.from(thresholdPublicKeyBytes),
+    thresholdPublicKeyHex,
+    thresholdPublicKeySS58,
+    signingKeypair: signingKeypairBytes,
+    signingKeypairArray: signingKeypairBytes ? Array.from(signingKeypairBytes) : [],
+    signingKeypairHex,
+    sppOutputMessage: sppOutputMessageBytes,
+    sppOutputMessageArray: sppOutputMessageBytes ? Array.from(sppOutputMessageBytes) : [],
+    sppOutputMessageHex,
+    updatedAt: Date.now()
+  }
+
+  window.generatedThresholdKey = thresholdPublicKeyBytes
+  if (sppOutputMessageBytes) {
+    window.generatedSppOutputMessage = sppOutputMessageBytes
+  }
+  if (signingKeypairBytes) {
+    window.generatedSigningKeypair = signingKeypairBytes
+  }
+  window.generatedThresholdResult = normalizedProcessing
+  window.thresholdSigningState = window.thresholdSigningState || {}
+  window.thresholdSigningState.lastProcessedThreshold = normalizedProcessing
+
+  const thresholdSection = document.querySelector('section[aria-label="Threshold signing with SimplPedPoP"]')
+  if (thresholdSection) {
+    const existingDisplay = thresholdSection.querySelector('.threshold-key-display')
+    if (existingDisplay) {
+      existingDisplay.remove()
+    }
+
+    const thresholdKeyOutput = document.createElement('div')
+    thresholdKeyOutput.style.marginTop = '10px'
+    thresholdKeyOutput.style.padding = '10px'
+    thresholdKeyOutput.style.backgroundColor = '#e8f5e8'
+    thresholdKeyOutput.style.border = '1px solid #4caf50'
+    thresholdKeyOutput.style.borderRadius = '5px'
+    thresholdKeyOutput.style.fontFamily = 'monospace'
+    thresholdKeyOutput.style.wordBreak = 'break-all'
+    thresholdKeyOutput.className = 'threshold-key-display'
+    thresholdKeyOutput.innerHTML = `
+      <h4>🔐 Generated Threshold Public Key</h4>
+      <p><strong>Threshold Key:</strong> ${thresholdPublicKeySS58}</p>
+    `
+
+    thresholdSection.appendChild(thresholdKeyOutput)
+  }
+
+  return normalizedProcessing
+}
+
+const persistThresholdArtifacts = (processing) => {
+  if (!processing) {
+    return
+  }
+
+  const thresholdHex = encodeBytesForStorage(processing.thresholdPublicKey || processing.thresholdPublicKeyArray)
+  const signingHex = encodeBytesForStorage(processing.signingKeypair || processing.signingKeypairArray)
+  if (!thresholdHex || !signingHex) {
+    return
+  }
+
+  const metadata = {
+    thresholdPublicKeyHex: thresholdHex,
+    thresholdPublicKeySS58: processing.thresholdPublicKeySS58 || null,
+    signingKeypairHex: signingHex,
+    sppOutputMessageHex: encodeBytesForStorage(processing.sppOutputMessage || processing.sppOutputMessageArray),
+    storedAt: Date.now()
+  }
+
+  const address = sessionState?.mySS58Address
+  mergePersistedUserState(address, { thresholdArtifacts: metadata })
+  appendOutput('Saved threshold public key and signing key to browser storage.')
+}
+
+const restorePersistedAllMessages = (address) => {
+  const persisted = loadPersistedUserState(address)
+  if (!persisted) {
+    return
+  }
+
+  const generatedMetadata = persisted.generatedAllMessage
+  if (generatedMetadata && typeof generatedMetadata.hex === 'string') {
+    const bytes = decodeStoredHexToBytes(generatedMetadata.hex)
+    if (bytes) {
+      generatedAllMessage = bytes
+      window.thresholdSigningState = window.thresholdSigningState || {}
+      window.thresholdSigningState.lastGeneratedAllMessage = {
+        allMessage: bytes,
+        allMessageArray: Array.from(bytes),
+        allMessageHex: toHexString(bytes),
+        recipients: Array.isArray(generatedMetadata.recipients) ? generatedMetadata.recipients.slice() : [],
+        threshold: generatedMetadata.threshold ?? null,
+        restoredFromStorage: true
+      }
+      updateGeneratedAllMessageUi(bytes, generatedMetadata.hex)
+      appendOutput('Loaded generated AllMessage from browser storage.')
+    }
+  }
+
+  const receivedMetadata = persisted.receivedAllMessage
+  if (receivedMetadata && typeof receivedMetadata.hex === 'string') {
+    const bytes = decodeStoredHexToBytes(receivedMetadata.hex)
+    if (bytes) {
+      receivedAllMessage = bytes
+      appendOutput('Loaded received AllMessage from browser storage.')
+    }
+  }
+
+  const thresholdMetadata = persisted.thresholdArtifacts
+  if (thresholdMetadata && typeof thresholdMetadata.thresholdPublicKeyHex === 'string') {
+    const thresholdBytes = decodeStoredHexToBytes(thresholdMetadata.thresholdPublicKeyHex)
+    const signingBytes =
+      typeof thresholdMetadata.signingKeypairHex === 'string'
+        ? decodeStoredHexToBytes(thresholdMetadata.signingKeypairHex)
+        : null
+    const sppBytes =
+      typeof thresholdMetadata.sppOutputMessageHex === 'string'
+        ? decodeStoredHexToBytes(thresholdMetadata.sppOutputMessageHex)
+        : null
+
+    if (thresholdBytes && signingBytes) {
+      const processingState = setThresholdProcessingState({
+        thresholdPublicKey: thresholdBytes,
+        thresholdPublicKeyHex: toHexString(thresholdBytes),
+        thresholdPublicKeySS58: thresholdMetadata.thresholdPublicKeySS58 || encodeAddress(thresholdBytes, 42),
+        signingKeypair: signingBytes,
+        signingKeypairHex: toHexString(signingBytes),
+        sppOutputMessage: sppBytes || undefined,
+        sppOutputMessageHex: sppBytes ? toHexString(sppBytes) : undefined,
+        restoredFromStorage: true
+      })
+
+      if (processingState) {
+        appendOutput('Loaded threshold public key and signing key from browser storage.')
+      }
+    }
+  }
+}
+
 const parseSigningJson = (jsonString, label) => {
   const parsed = JSON.parse(jsonString)
   if (!Array.isArray(parsed)) {
@@ -817,6 +1148,7 @@ const handleReceivedAllMessage = (payload) => {
   const [messageBytes] = parseIncomingByteArrays(payload, 'AllMessage')
   receivedAllMessage = Uint8Array.from(messageBytes)
   appendOutput(`✓ AllMessage received and stored: ${receivedAllMessage.length} bytes`)
+  persistReceivedAllMessage(receivedAllMessage)
 }
 
 const handleReceivedRound1Commitments = (payload) => {
@@ -1848,6 +2180,7 @@ const storeAddressInRelay = async (polkadotAddress, webrtcMultiaddr, secretKey, 
     sessionState.mySS58Address = polkadotAddress
     sessionState.mySecretKey = secretKey
     appendOutput('Address registered with proof of possession!')
+    restorePersistedAllMessages(polkadotAddress)
   } catch (error) {
     throw new Error(`Proof of possession failed: ${error.message}`)
   }
@@ -2584,6 +2917,7 @@ window['generate-all-message'].onclick = async () => {
       actionsDiv.style.display = 'block'
 
       appendOutput('AllMessage ready for sending or storage')
+      persistGeneratedAllMessage(generation)
     } catch (err) {
       appendOutput(`Error generating AllMessage: ${err.message}`)
       console.error('Generate AllMessage error:', err)
@@ -2681,39 +3015,10 @@ window['process-all-messages'].onclick = async () => {
       appendOutput(`First 16 bytes: ${processing.thresholdPublicKeyArray.slice(0, 16).map(b => b.toString(16).padStart(2, '0')).join(' ')}`)
       appendOutput(`Threshold Public Key (hex): ${processing.thresholdPublicKeyHex}`)
 
-      window.generatedThresholdKey = processing.thresholdPublicKey
-      window.generatedSppOutputMessage = processing.sppOutputMessage
-      window.generatedSigningKeypair = processing.signingKeypair
-      window.generatedThresholdResult = processing
-      window.thresholdSigningState.lastProcessedThreshold = processing
-
-      const thresholdKeyOutput = document.createElement('div')
-      thresholdKeyOutput.style.marginTop = '10px'
-      thresholdKeyOutput.style.padding = '10px'
-      thresholdKeyOutput.style.backgroundColor = '#e8f5e8'
-      thresholdKeyOutput.style.border = '1px solid #4caf50'
-      thresholdKeyOutput.style.borderRadius = '5px'
-      thresholdKeyOutput.style.fontFamily = 'monospace'
-      thresholdKeyOutput.style.wordBreak = 'break-all'
-
-      thresholdKeyOutput.innerHTML = `
-        <h4>🔐 Generated Threshold Public Key</h4>
-        <p><strong>Threshold Key:</strong> ${processing.thresholdPublicKeySS58}</p>
-      `
-
-      const thresholdSection = document.querySelector('section[aria-label="Threshold signing with SimplPedPoP"]')
-      if (thresholdSection) {
-        const existingDisplay = thresholdSection.querySelector('.threshold-key-display')
-        if (existingDisplay) {
-          existingDisplay.remove()
-        }
-
-        thresholdKeyOutput.className = 'threshold-key-display'
-        thresholdSection.appendChild(thresholdKeyOutput)
-      }
-
+      const normalizedProcessing = setThresholdProcessingState(processing) || processing
       appendOutput('✓ Threshold key processing completed successfully!')
       appendOutput('The threshold public key, SPP output message, and signing keypair are now available for use in threshold signing operations.')
+      persistThresholdArtifacts(normalizedProcessing)
 
       const round1Actions = document.getElementById('round1-signing-actions')
       if (round1Actions) {
@@ -2949,6 +3254,19 @@ window['run-round1-signing'].onclick = async () => {
         window.generatedSigningKeypair = signingKeypairToUse
       }
       appendOutput('Using cached signing keypair from threshold-keys-cache.json for Round 1 signing.')
+    }
+
+    if (!signingKeypairToUse && registeredAddress) {
+      const persisted = loadPersistedUserState(registeredAddress)
+      const persistedHex = persisted?.thresholdArtifacts?.signingKeypairHex
+      if (typeof persistedHex === 'string') {
+        const decoded = decodeStoredHexToBytes(persistedHex)
+        if (decoded) {
+          signingKeypairToUse = decoded
+          window.generatedSigningKeypair = decoded
+          appendOutput('Using stored signing keypair from browser storage for Round 1 signing.')
+        }
+      }
     }
 
     if (!signingKeypairToUse) {
