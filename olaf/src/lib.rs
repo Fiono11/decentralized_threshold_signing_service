@@ -259,7 +259,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_simplpedpop_with_test_keys() {
+    fn test_olaf_with_test_keys() {
         use hex_literal::hex;
 
         const TEST_SECRET_KEY_1: [u8; 32] =
