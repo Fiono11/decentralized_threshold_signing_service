@@ -1431,11 +1431,6 @@ window['send-all-message'].onclick = async () => {
 
 }
 
-// Store AllMessage in relay server
-window['store-all-message'].onclick = async () => {
-
-}
-
 // Process AllMessages to generate threshold key
 window['process-all-messages'].onclick = async () => {
   try {
