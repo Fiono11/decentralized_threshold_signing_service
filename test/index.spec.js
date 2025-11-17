@@ -2,6 +2,7 @@
 
 import { test, expect } from '@playwright/test'
 import { createRelayServer, setupRelayHandlers } from '../relay.js'
+import { RELAY_PEER_ID } from '../config/relay-peer-id.js'
 import { spawn } from 'child_process'
 
 // DOM Selectors
@@ -25,7 +26,7 @@ const TEST_SECRET_KEY_2 = "0xdb9ddbb3d6671c4de8248a4fba95f3d873dc21a0434b52951bb
 
 // Test Constants
 const TEST_CONFIG = {
-  hardcodedPeerId: '12D3KooWA1bysjrTACSWqf6q172inxvwKHUxAnBtVgaVDKMxpZtx',
+  hardcodedPeerId: RELAY_PEER_ID,
   relayPort: '8080',
   relayListenAddress: '/ip4/127.0.0.1/tcp/8080/ws',
   testSS58AddressA: '5CXkZyy4S5b3w16wvKA2hUwzp5q2y7UtRPkXnW97QGvDN8Jw',
@@ -99,7 +100,6 @@ const createTestRelayServer = async () => {
   const testKvStore = new Map()
 
   const { server: relayNode, kvStore } = await createRelayServer({
-    peerIdString: TEST_CONFIG.hardcodedPeerId,
     port: TEST_CONFIG.relayPort,
     listenAddresses: [TEST_CONFIG.relayListenAddress],
     kvStore: testKvStore
