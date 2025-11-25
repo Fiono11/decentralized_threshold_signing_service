@@ -113,6 +113,22 @@ Two browsers will exchange messages and produce a valid threshold signature over
 - Node.js installed
 - npm or yarn package manager
 
+#### Relay Peer ID configuration
+- The relay server loads a base64-encoded Ed25519 private key from `config/relay-peer-key.json`. Because the private key is hardcoded, every relay startup reuses the exact same LibP2P identity.
+- The browser client and automated tests read the public relay peer ID from `config/relay-peer-id.js`. Keep this file in sync with the private key above (generate a new private key with a small Node script and capture its Peer ID).
+- To rotate the relay identity, replace the `privateKey` value with a new base64 string and update `config/relay-peer-id.js` with the peer ID emitted when loading that key.
+- To generate a new private key and peer ID, run:
+```bash
+node --input-type=module <<'EOF'
+import { createEd25519PeerId } from '@libp2p/peer-id-factory'
+
+const peerId = await createEd25519PeerId()
+console.log('Peer ID:', peerId.toString())
+console.log('Private key (base64):', Buffer.from(peerId.privateKey).toString('base64'))
+EOF
+```
+  Copy the printed base64 value into `config/relay-peer-key.json` and the peer ID string into `config/relay-peer-id.js`, then restart the relay (and rerun tests) so everything picks up the refreshed identity.
+
 #### Automatic Testing
 ```bash
 npm test

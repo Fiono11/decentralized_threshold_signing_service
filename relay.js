@@ -21,11 +21,21 @@ import * as filters from '@libp2p/websockets/filters'
 import { createLibp2p } from 'libp2p'
 import { byteStream } from 'it-byte-stream'
 import { fromString, toString } from 'uint8arrays'
-import { peerIdFromString } from '@libp2p/peer-id'
+import { createFromJSON } from '@libp2p/peer-id-factory'
 import fetch from 'node-fetch'
 import { cryptoWaitReady, sr25519Verify, sr25519PairFromSeed } from '@polkadot/util-crypto'
 import { decodeAddress, encodeAddress } from '@polkadot/keyring'
 import { hexToU8a } from '@polkadot/util'
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { RELAY_PEER_ID } from './config/relay-peer-id.js'
+import { privateKeyFromProtobuf } from '@libp2p/crypto/keys'
+import { fromString as uint8ArrayFromString } from 'uint8arrays/from-string'
+
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = dirname(__filename)
+const RELAY_PEER_KEY_PATH = join(__dirname, 'config', 'relay-peer-key.json')
 
 // Constants
 const KV_PROTOCOL = '/libp2p/examples/kv/1.0.0'
@@ -33,7 +43,6 @@ const KV_QUERY_PROTOCOL = '/libp2p/examples/kv-query/1.0.0'
 const PROOF_OF_POSSESSION_PROTOCOL = '/libp2p/examples/proof-of-possession/1.0.0'
 const CONNECTION_CHALLENGE_PROTOCOL = '/libp2p/examples/connection-challenge/1.0.0'
 const CONNECTION_PERMISSION_PROTOCOL = '/libp2p/examples/connection-permission/1.0.0'
-const HARDCODED_PEER_ID = '12D3KooWA1bysjrTACSWqf6q172inxvwKHUxAnBtVgaVDKMxpZtx'
 const EXTERNAL_PORT = '8080'
 const MAX_RESERVATIONS = Infinity
 
@@ -129,6 +138,41 @@ const writeResponse = async (streamWriter, response) => {
   await streamWriter.write(fromString(JSON.stringify(response)))
 }
 
+// Relay peer key management
+const loadRelayPrivateKey = () => {
+  try {
+    const { privateKey } = JSON.parse(readFileSync(RELAY_PEER_KEY_PATH, 'utf-8'))
+    if (!privateKey || typeof privateKey !== 'string') {
+      throw new Error('Missing privateKey')
+    }
+    return privateKey
+  } catch (error) {
+    throw new Error(`Failed to load relay peer key from ${RELAY_PEER_KEY_PATH}: ${error.message}`)
+  }
+}
+
+const parsePrivateKeyInput = (privateKeyInput) => {
+  let privateKeyBytes
+  let privateKeyBase64
+
+  if (privateKeyInput instanceof Uint8Array) {
+    privateKeyBytes = privateKeyInput
+    privateKeyBase64 = Buffer.from(privateKeyBytes).toString('base64')
+  } else if (typeof privateKeyInput === 'string') {
+    privateKeyBase64 = privateKeyInput.trim()
+    privateKeyBytes = uint8ArrayFromString(privateKeyBase64, 'base64pad')
+  } else {
+    throw new Error('Invalid private key format')
+  }
+
+  return {
+    privateKey: privateKeyFromProtobuf(privateKeyBytes),
+    privateKeyBase64
+  }
+}
+
+const RELAY_PRIVATE_KEY = loadRelayPrivateKey()
+
 // Server Configuration
 const createDefaultListenAddresses = (port) => [
   `/ip4/0.0.0.0/tcp/${port}/ws`,
@@ -138,16 +182,24 @@ const createDefaultListenAddresses = (port) => [
 // Relay Server Creation
 export async function createRelayServer(options = {}) {
   const {
-    peerIdString = HARDCODED_PEER_ID,
+    peerPrivateKey = RELAY_PRIVATE_KEY,
     port = EXTERNAL_PORT,
     listenAddresses = createDefaultListenAddresses(port),
     kvStore: customKvStore = kvStore
   } = options
 
-  const peerId = await peerIdFromString(peerIdString)
+  const { privateKey, privateKeyBase64 } = parsePrivateKeyInput(peerPrivateKey)
+  const usesDefaultKey = options.peerPrivateKey === undefined
+
+  if (usesDefaultKey) {
+    const derivedPeerId = (await createFromJSON({ id: RELAY_PEER_ID, privKey: privateKeyBase64 })).toString()
+    if (derivedPeerId !== RELAY_PEER_ID) {
+      throw new Error('Relay private key does not match configured RELAY_PEER_ID')
+    }
+  }
 
   const server = await createLibp2p({
-    peerId,
+    privateKey,
     addresses: {
       listen: listenAddresses,
     },

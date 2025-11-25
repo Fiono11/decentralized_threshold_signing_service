@@ -1857,16 +1857,33 @@ const initializeSession = async () => {
 // Relay Configuration
 const RELAY_HOST = '127.0.0.1'
 const RELAY_PORT = '8080'
-const RELAY_PEER_ID = '12D3KooWA1bysjrTACSWqf6q172inxvwKHUxAnBtVgaVDKMxpZtx'
+const RELAY_PEER_ID = '12D3KooWAWN7MuqoNvFdoVKuSDG3HJvQA1txQzu5ujri49nhm2hn'
 const RELAY_ADDRESS = `/ip4/${RELAY_HOST}/tcp/${RELAY_PORT}/ws/p2p/${RELAY_PEER_ID}`
 
 // Connection Management
+const verifyRelayPeer = (connection) => {
+  const remotePeerId = connection?.remotePeer?.toString?.()
+  if (remotePeerId !== RELAY_PEER_ID) {
+    const peerLabel = remotePeerId ?? 'unknown'
+    appendOutput(
+      `Relay identity mismatch: expected ${RELAY_PEER_ID}, received ${peerLabel}`
+    )
+    return false
+  }
+
+  return true
+}
+
 const connectToRelay = async () => {
   try {
     appendOutput('Connecting to relay...')
     const relayMultiaddr = multiaddr(RELAY_ADDRESS)
     const signal = AbortSignal.timeout(CONNECTION_TIMEOUT)
-    await node.dial(relayMultiaddr, { signal })
+    const connection = await node.dial(relayMultiaddr, { signal })
+    if (!verifyRelayPeer(connection)) {
+      await connection.close()
+      throw new Error('Relay peer identity mismatch')
+    }
     appendOutput('Connected to relay')
   } catch (error) {
     if (error.name === 'AbortError') {
@@ -2967,11 +2984,6 @@ window['send-all-message'].onclick = async () => {
     appendOutput(`Error sending AllMessage: ${err.message}`)
     console.error('Send AllMessage error:', err)
   }
-
-}
-
-// Store AllMessage in relay server
-window['store-all-message'].onclick = async () => {
 
 }
 
