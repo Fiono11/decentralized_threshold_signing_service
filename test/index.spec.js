@@ -1657,7 +1657,7 @@ test.describe('Polkadot API Integration with Threshold Signing:', () => {
 
       try {
         // 2. Build the remark call
-        const remarkText = 'Hello Westend (threshold signing example)'
+        const remarkText = 'Hello, Westend!'
         // Convert text to hex (browser-compatible)
         const remarkHex = '0x' + Array.from(new TextEncoder().encode(remarkText))
           .map(b => b.toString(16).padStart(2, '0')).join('')

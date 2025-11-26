@@ -584,7 +584,7 @@ const EXTRINSIC_TEST_CONFIG = Object.freeze({
     '0xdb9ddbb3d6671c4de8248a4fba95f3d873dc21a0434b52951bb33730c1ac93d7'
   ],
   threshold: 2,
-  remarkText: 'Hello Westend (threshold signing example)',
+  remarkText: 'Hello, Westend!',
   wsEndpoint: 'wss://westend-rpc.polkadot.io',
   signingContext: 'substrate'
 })
@@ -3159,9 +3159,6 @@ window['run-round2-signing'].onclick = async () => {
     const manualPayload = payloadInput && payloadInput.value.trim()
       ? payloadInput.value.trim()
       : ''
-    if (manualPayload) {
-      appendOutput('Manual payload input detected but will be replaced with constructed extrinsic payload.')
-    }
 
     const contextInput = document.getElementById('round2-context-input')
     const contextRaw = contextInput && contextInput.value.trim()
@@ -3378,27 +3375,49 @@ window['run-round2-signing'].onclick = async () => {
     const allCommitmentsBytes = orderedCommitments.map((entry) => entry.bytes)
     appendOutput(`Using ${allCommitmentsBytes.length} commitment set(s) ordered by verifying keys`)
 
-    appendOutput('Constructing signable payload using extrinsic configuration...')
+    let payloadBytes
+    let payloadHex
+    let payloadSource
 
-    let signablePayloadDetails
-    try {
-      signablePayloadDetails = await constructSignablePayloadForRound2()
-    } catch (error) {
-      appendOutput(`Failed to construct signable payload: ${error.message}`)
-      return
-    }
+    if (manualPayload) {
+      // Use manual payload input
+      appendOutput('Using manual payload input...')
+      try {
+        payloadBytes = toPayloadUint8Array(manualPayload, 'payload')
+        payloadHex = toHexString(payloadBytes, { withPrefix: true })
+        payloadSource = 'manual'
+        appendOutput(`✓ Manual payload ready (${payloadBytes.length} bytes)`)
+        appendOutput(`Payload preview: ${payloadHex.substring(0, 66)}...`)
+      } catch (error) {
+        appendOutput(`Failed to process manual payload: ${error.message}`)
+        return
+      }
+    } else {
+      // Use default Substrate extrinsic payload
+      appendOutput('Constructing signable payload using extrinsic configuration...')
+      let signablePayloadDetails
+      try {
+        signablePayloadDetails = await constructSignablePayloadForRound2()
+        payloadBytes = signablePayloadDetails.signableU8a
+        payloadHex = signablePayloadDetails.signableHex
+        payloadSource = 'extrinsic'
+        appendOutput(`✓ Signable payload ready (${payloadBytes.length} bytes) from ${signablePayloadDetails.chain}`)
+        appendOutput(`Payload preview: ${payloadHex.substring(0, 66)}...`)
 
-    appendOutput(`✓ Signable payload ready (${signablePayloadDetails.signableU8a.length} bytes) from ${signablePayloadDetails.chain}`)
-    appendOutput(`Payload preview: ${signablePayloadDetails.signableHex.substring(0, 66)}...`)
-
-    window.thresholdSigningState = window.thresholdSigningState || {}
-    window.thresholdSigningState.lastSignablePayload = {
-      ...signablePayloadDetails,
-      length: signablePayloadDetails.signableU8a.length
+        window.thresholdSigningState = window.thresholdSigningState || {}
+        window.thresholdSigningState.lastSignablePayload = {
+          ...signablePayloadDetails,
+          length: payloadBytes.length
+        }
+      } catch (error) {
+        appendOutput(`Failed to construct signable payload: ${error.message}`)
+        return
+      }
     }
 
     appendOutput('Running Round 2 signing...')
     appendOutput(`Context: ${contextText}`)
+    appendOutput(`Payload source: ${payloadSource === 'manual' ? 'Manual input' : 'Substrate extrinsic'}`)
 
     const commitmentsNormalized = allCommitmentsBytes.map((bytes) => Array.from(bytes))
     const commitmentsHex = allCommitmentsBytes.map((bytes) => toHexString(bytes, { withPrefix: true }))
@@ -3408,8 +3427,6 @@ window['run-round2-signing'].onclick = async () => {
     const signingKeypairBytes = ensureByteArray(signingKeypairToUse, 'Signing keypair')
     const signingNoncesBytes = ensureByteArray(round1Nonces, 'Signing nonces')
     const sppOutputMessageBytes = ensureByteArray(sppOutputMessageToUse, 'SPP output message')
-    const payloadBytes = signablePayloadDetails.signableU8a
-    const payloadHex = toHexString(payloadBytes, { withPrefix: true })
     const sppOutputHex = toHexString(sppOutputMessageBytes, { withPrefix: true })
 
     appendOutput('wasm_threshold_sign_round2 inputs:')

@@ -278,17 +278,16 @@
         <form role="form" aria-label="Threshold signing configuration">
           <div id="round1-signing-actions" style="margin-top: 10px;">
             <h3>Round 1 Signing</h3>
-            <label for="round1-context-input">Context (optional):</label>
-            <input type="text" id="round1-context-input" placeholder="Enter context for signing (default: empty)"
-              value="" />
             <button type="button" id="run-round1-signing">Run Round 1 Signing</button>
             <div id="round1-output" style="margin-top: 10px; font-family: monospace; word-break: break-all;"></div>
           </div>
           <div id="round2-signing-actions" style="margin-top: 10px;">
             <h3>Round 2 Signing</h3>
-            <label for="round2-payload-input">Payload to Sign:</label>
+            <label for="round2-payload-input">Payload to Sign (optional, default: Substrate extrinsic with remark "Hello
+              Westend
+              (threshold signing example)"):</label>
             <textarea id="round2-payload-input" rows="3"
-              placeholder="Enter the payload to sign (hex or UTF-8 text)">test payload to sign with threshold signature</textarea>
+              placeholder="Enter hex string or UTF-8 text. If empty, a Substrate extrinsic payload will be automatically constructed."></textarea>
             <label for="round2-context-input">Context (optional, default: substrate):</label>
             <input type="text" id="round2-context-input" placeholder="Enter signing context (default: substrate)" />
             <button type="button" id="run-round2-signing">Run Round 2 Signing</button>
