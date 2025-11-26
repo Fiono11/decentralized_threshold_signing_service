@@ -18,7 +18,6 @@ import { cryptoWaitReady, sr25519Sign, sr25519Verify, sr25519PairFromSeed } from
 import { hexToU8a, u8aToHex } from '@polkadot/util'
 import { createEd25519PeerId } from '@libp2p/peer-id-factory'
 import initOlaf, { wasm_simplpedpop_contribute_all, wasm_keypair_from_secret, wasm_simplpedpop_recipient_all, wasm_aggregate_threshold_signature, wasm_threshold_sign_round1, wasm_threshold_sign_round2 } from './olaf/pkg/olaf.js'
-import thresholdKeysCache from './test/threshold-keys-cache.json' assert { type: 'json' }
 
 // Constants
 const WEBRTC_CODE = WebRTC.code
@@ -553,24 +552,6 @@ const parseSigningJson = (jsonString, label) => {
   }
 }
 
-const normalizeCacheEntry = (value, label, source = 'threshold-keys-cache.json') => {
-  if (value instanceof Uint8Array) {
-    return value
-  }
-
-  if (Array.isArray(value)) {
-    const isValid = value.every((byte) => Number.isInteger(byte) && byte >= 0 && byte <= 255)
-    if (!isValid) {
-      console.warn(`${source} ${label} contains invalid byte values; ignoring cache entry`)
-      return null
-    }
-    return Uint8Array.from(value)
-  }
-
-  console.warn(`${source} is missing a valid ${label}; ignoring cache entry`)
-  return null
-}
-
 const DEFAULT_PEER_SS58_ADDRESSES = Object.freeze([
   '5CXkZyy4S5b3w16wvKA2hUwzp5q2y7UtRPkXnW97QGvDN8Jw',
   '5Gma8SNsn6rkQf9reAWFQ9WKq8bwwHtSzwMYtLTdhYsGPKiy'
@@ -591,145 +572,9 @@ const areUint8ArraysEqual = (a, b) => {
   return true
 }
 
-const buildThresholdKeysCache = () => {
-  if (!thresholdKeysCache || typeof thresholdKeysCache !== 'object') {
-    return null
-  }
-
-  const sourcePeers = thresholdKeysCache.peers
-  const normalizedPeers = {}
-  let sharedThreshold = null
-
-  const normalizePeer = (address, entry) => {
-    if (!entry || typeof entry !== 'object') {
-      console.warn(`threshold-keys-cache.json missing peer entry for ${address}`)
-      return false
-    }
-
-    const thresholdPublicKey = normalizeCacheEntry(
-      entry.thresholdPublicKey,
-      `peers.${address}.thresholdPublicKey`
-    )
-    const sppOutputMessage = normalizeCacheEntry(
-      entry.sppOutputMessage,
-      `peers.${address}.sppOutputMessage`
-    )
-    const signingKeypair = normalizeCacheEntry(
-      entry.signingKeypair,
-      `peers.${address}.signingKeypair`
-    )
-
-    if (!thresholdPublicKey || !sppOutputMessage || !signingKeypair) {
-      return false
-    }
-
-    if (!sharedThreshold) {
-      sharedThreshold = thresholdPublicKey
-    } else if (!areUint8ArraysEqual(sharedThreshold, thresholdPublicKey)) {
-      console.warn('threshold-keys-cache.json contains mismatched threshold public keys across peers; ignoring cache')
-      return false
-    }
-
-    normalizedPeers[address] = Object.freeze({
-      thresholdPublicKey,
-      sppOutputMessage,
-      signingKeypair
-    })
-
-    return true
-  }
-
-  if (sourcePeers && typeof sourcePeers === 'object') {
-    for (const address of DEFAULT_PEER_SS58_ADDRESSES) {
-      if (!normalizePeer(address, sourcePeers[address])) {
-        return null
-      }
-    }
-  } else {
-    const legacyEntries = [
-      {
-        address: DEFAULT_PEER_SS58_ADDRESSES[0],
-        thresholdPublicKey: thresholdKeysCache.thresholdPublicKey1,
-        sppOutputMessage: thresholdKeysCache.sppOutputMessage1,
-        signingKeypair: thresholdKeysCache.signingKeypair1
-      },
-      {
-        address: DEFAULT_PEER_SS58_ADDRESSES[1],
-        thresholdPublicKey: thresholdKeysCache.thresholdPublicKey2,
-        sppOutputMessage: thresholdKeysCache.sppOutputMessage2,
-        signingKeypair: thresholdKeysCache.signingKeypair2
-      }
-    ]
-
-    if (!legacyEntries.every((entry) => entry.thresholdPublicKey && entry.sppOutputMessage && entry.signingKeypair)) {
-      console.warn('threshold-keys-cache.json is missing required entries; falling back to runtime generation')
-      return null
-    }
-
-    for (const entry of legacyEntries) {
-      if (!normalizePeer(entry.address, entry)) {
-        return null
-      }
-    }
-  }
-
-  if (!sharedThreshold) {
-    console.warn('threshold-keys-cache.json missing shared threshold public key; falling back to runtime generation')
-    return null
-  }
-
-  const thresholdPublicKey = normalizeCacheEntry(
-    thresholdKeysCache.thresholdPublicKey ?? sharedThreshold,
-    'thresholdPublicKey'
-  )
-
-  if (!thresholdPublicKey) {
-    console.warn('threshold-keys-cache.json missing thresholdPublicKey; falling back to runtime generation')
-    return null
-  }
-
-  return Object.freeze({
-    thresholdPublicKey,
-    thresholdPublicKeyHex: toHexString(thresholdPublicKey, { withPrefix: true }),
-    thresholdPublicKeySS58: encodeAddress(thresholdPublicKey, 42),
-    peers: Object.freeze(normalizedPeers)
-  })
-}
-
-const THRESHOLD_KEYS_CACHE = buildThresholdKeysCache()
-
 const ensureCachedThresholdSigningForAddress = (ss58Address) => {
-  if (typeof window === 'undefined') {
-    return { artifacts: null, updated: false }
-  }
-
-  if (!ss58Address || !THRESHOLD_KEYS_CACHE?.peers?.[ss58Address]) {
-    return { artifacts: null, updated: false }
-  }
-
-  const peerCache = THRESHOLD_KEYS_CACHE.peers[ss58Address]
-  const current = window.cachedThresholdSigning
-
-  if (
-    current &&
-    current.ownerAddress === ss58Address &&
-    areUint8ArraysEqual(current.signingKeypair, peerCache.signingKeypair) &&
-    areUint8ArraysEqual(current.sppOutputMessage, peerCache.sppOutputMessage)
-  ) {
-    return { artifacts: current, updated: false }
-  }
-
-  const artifacts = {
-    thresholdPublicKey: new Uint8Array(THRESHOLD_KEYS_CACHE.thresholdPublicKey),
-    thresholdPublicKeyHex: THRESHOLD_KEYS_CACHE.thresholdPublicKeyHex,
-    thresholdPublicKeySS58: THRESHOLD_KEYS_CACHE.thresholdPublicKeySS58,
-    sppOutputMessage: new Uint8Array(peerCache.sppOutputMessage),
-    signingKeypair: new Uint8Array(peerCache.signingKeypair),
-    ownerAddress: ss58Address
-  }
-
-  window.cachedThresholdSigning = artifacts
-  return { artifacts, updated: true }
+  // Cache functionality removed - always return null
+  return { artifacts: null, updated: false }
 }
 
 const EXTRINSIC_TEST_CONFIG = Object.freeze({
@@ -741,8 +586,7 @@ const EXTRINSIC_TEST_CONFIG = Object.freeze({
   threshold: 2,
   remarkText: 'Hello Westend (threshold signing example)',
   wsEndpoint: 'wss://westend-rpc.polkadot.io',
-  signingContext: 'substrate',
-  thresholdCache: THRESHOLD_KEYS_CACHE
+  signingContext: 'substrate'
 })
 
 const createThresholdSigningApi = () => {
@@ -2463,20 +2307,8 @@ const initializeWasm = async () => {
     updatePeerRound1CommitmentsStatus()
     updatePeerSigningPackagesStatus()
 
-    if (THRESHOLD_KEYS_CACHE) {
-      const localAddress = DEFAULT_PEER_SS58_ADDRESSES[0]
-      const { artifacts } = ensureCachedThresholdSigningForAddress(localAddress)
-
-      if (artifacts) {
-        appendOutput('Cached threshold signing artifacts available from threshold-keys-cache.json')
-        appendOutput('Run Process AllMessages to generate fresh SimplPedPoP artifacts before signing.')
-      } else {
-        window.cachedThresholdSigning = null
-      }
-    } else {
-      window.cachedThresholdSigning = null
-      appendOutput('No cached threshold signing artifacts detected; run Process AllMessages to generate signing keypair.')
-    }
+    window.cachedThresholdSigning = null
+    appendOutput('Run Process AllMessages to generate signing keypair.')
 
     appendOutput('WASM module initialized successfully')
   } catch (error) {
@@ -2657,9 +2489,6 @@ window['submit-extrinsic'].onclick = async () => {
         return window.cachedThresholdSigning.thresholdPublicKey instanceof Uint8Array
           ? new Uint8Array(window.cachedThresholdSigning.thresholdPublicKey)
           : new Uint8Array(window.cachedThresholdSigning.thresholdPublicKey)
-      }
-      if (THRESHOLD_KEYS_CACHE?.thresholdPublicKey) {
-        return new Uint8Array(THRESHOLD_KEYS_CACHE.thresholdPublicKey)
       }
       return null
     }
@@ -3183,16 +3012,7 @@ async function sendSigningPackageToPeer() {
 window['run-round1-signing'].onclick = async () => {
   try {
     const registeredAddress = typeof sessionState !== 'undefined' ? sessionState.mySS58Address : null
-    const cachedSigningKeypair = window.cachedThresholdSigning?.signingKeypair
-    let signingKeypairToUse = cachedSigningKeypair || window.generatedSigningKeypair
-
-    if (cachedSigningKeypair) {
-      signingKeypairToUse = new Uint8Array(cachedSigningKeypair)
-      if (!window.generatedSigningKeypair) {
-        window.generatedSigningKeypair = signingKeypairToUse
-      }
-      appendOutput('Using cached signing keypair from threshold-keys-cache.json for Round 1 signing.')
-    }
+    let signingKeypairToUse = window.generatedSigningKeypair
 
     if (!signingKeypairToUse && registeredAddress) {
       const persisted = loadPersistedUserState(registeredAddress)
@@ -3208,7 +3028,7 @@ window['run-round1-signing'].onclick = async () => {
     }
 
     if (!signingKeypairToUse) {
-      appendOutput('No signing keypair available. Please process AllMessages first or ensure threshold-keys-cache.json is present.')
+      appendOutput('No signing keypair available. Please process AllMessages first.')
       return
     }
 
@@ -3229,19 +3049,7 @@ window['run-round1-signing'].onclick = async () => {
 // Round 2 Signing Handler
 const constructSignablePayloadForRound2 = async () => {
   const thresholdState = window.thresholdSigningState?.lastProcessedThreshold
-  let thresholdPublicKey = thresholdState?.thresholdPublicKey
-
-  if (!thresholdPublicKey) {
-    const cachedThresholdPublicKey = window.cachedThresholdSigning?.thresholdPublicKey
-    if (cachedThresholdPublicKey) {
-      thresholdPublicKey = new Uint8Array(cachedThresholdPublicKey)
-      window.thresholdSigningState = window.thresholdSigningState || {}
-      window.thresholdSigningState.lastProcessedThreshold = window.thresholdSigningState.lastProcessedThreshold || {
-        thresholdPublicKey
-      }
-      appendOutput('Using cached threshold public key from threshold-keys-cache.json for Round 2 payload construction.')
-    }
-  }
+  const thresholdPublicKey = thresholdState?.thresholdPublicKey
 
   if (!thresholdPublicKey) {
     throw new Error('Threshold public key unavailable. Please process AllMessages first.')
@@ -3311,76 +3119,16 @@ const constructSignablePayloadForRound2 = async () => {
 window['run-round2-signing'].onclick = async () => {
   try {
     const registeredAddress = typeof sessionState !== 'undefined' ? sessionState.mySS58Address : null
-    let cachedArtifacts = null
-    let cacheStatusMessage = null
-
-    if (registeredAddress) {
-      const { artifacts, updated } = ensureCachedThresholdSigningForAddress(registeredAddress)
-      if (artifacts) {
-        cachedArtifacts = artifacts
-        if (updated) {
-          cacheStatusMessage = `Loaded cached threshold signing artifacts for registered address ${registeredAddress}.`
-        }
-      } else if (
-        THRESHOLD_KEYS_CACHE?.peers &&
-        !Object.prototype.hasOwnProperty.call(THRESHOLD_KEYS_CACHE.peers, registeredAddress)
-      ) {
-        appendOutput(`No cached threshold signing artifacts found for registered address ${registeredAddress}.`)
-      }
-    }
-
-    if (
-      !cachedArtifacts &&
-      (!registeredAddress || !THRESHOLD_KEYS_CACHE?.peers) &&
-      window.cachedThresholdSigning
-    ) {
-      cachedArtifacts = window.cachedThresholdSigning
-    }
-
-    if (cacheStatusMessage) {
-      appendOutput(cacheStatusMessage)
-    }
-
-    const cachedSigningKeypair = cachedArtifacts?.signingKeypair
-    const cachedSppOutputMessage = cachedArtifacts?.sppOutputMessage
-
-    let signingKeypairToUse
-    if (cachedSigningKeypair) {
-      signingKeypairToUse = new Uint8Array(cachedSigningKeypair)
-      if (!window.generatedSigningKeypair) {
-        window.generatedSigningKeypair = signingKeypairToUse
-      }
-      appendOutput(
-        cachedArtifacts?.ownerAddress
-          ? `Using cached signing keypair from threshold-keys-cache.json for address ${cachedArtifacts.ownerAddress}.`
-          : 'Using cached signing keypair from threshold-keys-cache.json for Round 2 signing.'
-      )
-    } else {
-      signingKeypairToUse = window.generatedSigningKeypair
-    }
-
-    let sppOutputMessageToUse
-    if (cachedSppOutputMessage) {
-      sppOutputMessageToUse = new Uint8Array(cachedSppOutputMessage)
-      if (!window.generatedSppOutputMessage) {
-        window.generatedSppOutputMessage = sppOutputMessageToUse
-      }
-      appendOutput(
-        cachedArtifacts?.ownerAddress
-          ? `Using cached SPP output message from threshold-keys-cache.json for address ${cachedArtifacts.ownerAddress}.`
-          : 'Using cached SPP output message from threshold-keys-cache.json for Round 2 signing.'
-      )
-    } else {
-      sppOutputMessageToUse = window.generatedSppOutputMessage
-    }
+    const signingKeypairToUse = window.generatedSigningKeypair
+    const sppOutputMessageToUse = window.generatedSppOutputMessage
 
     if (!signingKeypairToUse) {
-      appendOutput('No signing keypair available. Please process AllMessages first or ensure threshold-keys-cache.json is present.')
+      appendOutput('No signing keypair available. Please process AllMessages first.')
       return
     }
 
     if (!sppOutputMessageToUse) {
-      appendOutput('No SPP output message available. Please process AllMessages first or ensure threshold-keys-cache.json is present.')
+      appendOutput('No SPP output message available. Please process AllMessages first.')
       return
     }
 
