@@ -3586,7 +3586,7 @@ window['run-round2-signing'].onclick = async () => {
     }
 
     const seenCommitments = new Set()
-    const canonicalCommitments = []
+    const uniqueCommitments = []
     commitmentEntries.forEach((entry) => {
       const hex = toHexString(entry.bytes, { withPrefix: true })
       if (seenCommitments.has(hex)) {
@@ -3594,20 +3594,92 @@ window['run-round2-signing'].onclick = async () => {
         return
       }
       seenCommitments.add(hex)
-      canonicalCommitments.push({
+      uniqueCommitments.push({
         ...entry,
         hex
       })
     })
-    canonicalCommitments.sort((a, b) => b.hex.localeCompare(a.hex))
 
-    if (canonicalCommitments.length === 0) {
-      appendOutput('No unique commitments available after canonicalization.')
+    if (uniqueCommitments.length === 0) {
+      appendOutput('No unique commitments available after deduplication.')
       return
     }
 
-    const allCommitmentsBytes = canonicalCommitments.map((entry) => entry.bytes)
-    appendOutput(`Using ${allCommitmentsBytes.length} commitment set(s) in canonical order`)
+    // Order commitments according to verifying keys order in SPP output
+    // The verifying keys order matches the recipients order from AllMessage generation
+    const recipients = window.thresholdSigningState?.lastGeneratedAllMessage?.recipients || null
+    let orderedCommitments = []
+
+    if (recipients && Array.isArray(recipients) && recipients.length > 0) {
+      // Get local commitment
+      const localCommitmentEntry = uniqueCommitments.find(entry => entry.source === 'local')
+      const peerCommitmentEntries = uniqueCommitments.filter(entry => entry.source !== 'local')
+
+      // Create a map of commitments by participant index
+      const commitmentsByRecipientIndex = new Map()
+
+      // Match local commitment to registered address position in recipients
+      let useRecipientsOrder = true
+      if (localCommitmentEntry && registeredAddress) {
+        const localIndex = recipients.indexOf(registeredAddress)
+        if (localIndex !== -1) {
+          commitmentsByRecipientIndex.set(localIndex, localCommitmentEntry)
+        } else {
+          appendOutput(`Warning: Registered address ${registeredAddress} not found in recipients list. Using canonical ordering as fallback.`)
+          useRecipientsOrder = false
+        }
+      } else if (localCommitmentEntry) {
+        // If no registered address, assume local is first recipient
+        commitmentsByRecipientIndex.set(0, localCommitmentEntry)
+      }
+
+      if (!useRecipientsOrder) {
+        // Fallback to canonical ordering
+        orderedCommitments = [...uniqueCommitments]
+        orderedCommitments.sort((a, b) => b.hex.localeCompare(a.hex))
+      } else {
+
+        // Distribute peer commitments to remaining positions
+        // We'll assign them to positions that don't have a commitment yet, in order
+        let peerIndex = 0
+        for (let i = 0; i < recipients.length && peerIndex < peerCommitmentEntries.length; i++) {
+          if (!commitmentsByRecipientIndex.has(i)) {
+            commitmentsByRecipientIndex.set(i, peerCommitmentEntries[peerIndex])
+            peerIndex++
+          }
+        }
+
+        // If we still have peer commitments, add them to remaining positions
+        while (peerIndex < peerCommitmentEntries.length) {
+          for (let i = 0; i < recipients.length && peerIndex < peerCommitmentEntries.length; i++) {
+            if (!commitmentsByRecipientIndex.has(i)) {
+              commitmentsByRecipientIndex.set(i, peerCommitmentEntries[peerIndex])
+              peerIndex++
+              break
+            }
+          }
+        }
+
+        // Sort by recipient index to match verifying keys order
+        const sortedIndices = Array.from(commitmentsByRecipientIndex.keys()).sort((a, b) => a - b)
+        orderedCommitments = sortedIndices.map(index => commitmentsByRecipientIndex.get(index))
+
+        appendOutput(`Ordered ${orderedCommitments.length} commitment(s) according to verifying keys order in SPP output`)
+      }
+    } else {
+      // Fallback to canonical ordering if recipients order is not available
+      appendOutput('Warning: Recipients order not available. Using canonical ordering as fallback.')
+      orderedCommitments = [...uniqueCommitments]
+      orderedCommitments.sort((a, b) => b.hex.localeCompare(a.hex))
+    }
+
+    if (orderedCommitments.length === 0) {
+      appendOutput('No commitments available after ordering.')
+      return
+    }
+
+    const allCommitmentsBytes = orderedCommitments.map((entry) => entry.bytes)
+    appendOutput(`Using ${allCommitmentsBytes.length} commitment set(s) ordered by verifying keys`)
 
     appendOutput('Constructing signable payload using extrinsic configuration...')
 
