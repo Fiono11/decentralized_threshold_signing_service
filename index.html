@@ -257,11 +257,17 @@
           <label for="threshold-input">Threshold:</label>
           <input type="number" id="threshold-input" value="2" min="1" max="10" />
 
-          <button type="button" id="generate-all-message">Generate AllMessage</button>
-          <div id="all-message-output" style="margin-top: 10px; font-family: monospace; word-break: break-all;"></div>
-          <div id="all-message-actions" style="margin-top: 10px; display: none;">
-            <button type="button" id="send-all-message">Send AllMessage to Connected Peer</button>
-            <button type="button" id="process-all-messages">Process AllMessages (Generate Threshold Key)</button>
+          <div id="round1-generation-actions" style="margin-top: 10px;">
+            <h3>Round 1 Generation</h3>
+            <button type="button" id="run-round1-generation">Run Round 1 Generation</button>
+            <div id="round1-generation-output" style="margin-top: 10px; font-family: monospace; word-break: break-all;">
+            </div>
+          </div>
+          <div id="round2-generation-actions" style="margin-top: 10px;">
+            <h3>Round 2 Generation</h3>
+            <button type="button" id="run-round2-generation">Run Round 2 Generation</button>
+            <div id="round2-generation-output" style="margin-top: 10px; font-family: monospace; word-break: break-all;">
+            </div>
           </div>
         </form>
       </section>
@@ -276,8 +282,6 @@
             <input type="text" id="round1-context-input" placeholder="Enter context for signing (default: empty)"
               value="" />
             <button type="button" id="run-round1-signing">Run Round 1 Signing</button>
-            <button type="button" id="send-round1-commitments" style="display: none;">Send Commitments to Connected
-              Peer</button>
             <div id="round1-output" style="margin-top: 10px; font-family: monospace; word-break: break-all;"></div>
           </div>
           <div id="round2-signing-actions" style="margin-top: 10px;">

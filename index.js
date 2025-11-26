@@ -395,7 +395,7 @@ const setThresholdProcessingState = (processing) => {
   window.thresholdSigningState = window.thresholdSigningState || {}
   window.thresholdSigningState.lastProcessedThreshold = normalizedProcessing
 
-  const thresholdSection = document.querySelector('section[aria-label="Threshold signing with SimplPedPoP"]')
+  const thresholdSection = document.querySelector('section[aria-label="Threshold key generation"]')
   if (thresholdSection) {
     const existingDisplay = thresholdSection.querySelector('.threshold-key-display')
     if (existingDisplay) {
@@ -2633,7 +2633,8 @@ window['submit-extrinsic'].onclick = async () => {
   }
 }
 
-window['generate-all-message'].onclick = async () => {
+// Round 1 Generation: Generate AllMessage and send it to connected peers
+window['run-round1-generation'].onclick = async () => {
   try {
     const secretKeyInput = document.getElementById('threshold-secret-key-input').value.toString().trim()
     const recipientsInput = window['recipients-input'].value.toString().trim()
@@ -2663,10 +2664,14 @@ window['generate-all-message'].onclick = async () => {
       return
     }
 
-    appendOutput('Generating AllMessage...')
+    appendOutput('Round 1 Generation: Generating AllMessage...')
     appendOutput(`Secret key: ${secretKeyInput}`)
     appendOutput(`Recipients: ${recipients.join(', ')}`)
     appendOutput(`Threshold: ${threshold}`)
+
+    const outputDiv = document.getElementById('round1-generation-output')
+    outputDiv.textContent = 'Generating AllMessage...'
+
     try {
       const generation = window.thresholdSigning.generateAllMessage({
         secretKey: secretKeyInput,
@@ -2682,72 +2687,62 @@ window['generate-all-message'].onclick = async () => {
       appendOutput(`✓ AllMessage generated successfully: ${generation.allMessage.length} bytes`)
       appendOutput(`First 16 bytes: ${Array.from(generation.allMessage.slice(0, 16)).map(b => b.toString(16).padStart(2, '0')).join(' ')}`)
 
-      const outputDiv = document.getElementById('all-message-output')
       outputDiv.textContent = `AllMessage (${generation.allMessage.length} bytes): ${generation.allMessageHex}`
 
-      const actionsDiv = document.getElementById('all-message-actions')
-      actionsDiv.style.display = 'block'
-
-      appendOutput('AllMessage ready for sending or storage')
+      appendOutput('AllMessage ready for sending')
       persistGeneratedAllMessage(generation)
+
+      // Now send the AllMessage to connected peer
+      if (!sessionState.peerMultiaddr) {
+        appendOutput('⚠ No peer connected. AllMessage generated but not sent. Please connect to a peer first.')
+        outputDiv.textContent += '\n⚠ No peer connected. Please connect to a peer to send AllMessage.'
+        return
+      }
+
+      appendOutput('Sending AllMessage to connected peer...')
+      appendOutput(`AllMessage size: ${generatedAllMessage.length} bytes`)
+
+      // Convert AllMessage to hex string
+      const allMessageHex = Array.from(generatedAllMessage).map(b => b.toString(16).padStart(2, '0')).join('')
+      const messageToSend = `ALL_MESSAGE:${allMessageHex}`
+
+      appendOutput(`Sending: ${messageToSend.substring(0, 50)}...`)
+
+      // Ensure we have a chat stream
+      const streamReady = await handleChatStream()
+      if (!streamReady) {
+        outputDiv.textContent += '\n⚠ Failed to establish chat stream.'
+        return
+      }
+
+      // Send the AllMessage
+      await sendMessage(messageToSend)
+      appendOutput('✓ AllMessage sent successfully to connected peer')
+      outputDiv.textContent += '\n✓ AllMessage sent successfully to connected peer'
+
+      // Show Round 2 actions
+      const round2Actions = document.getElementById('round2-generation-actions')
+      if (round2Actions) {
+        round2Actions.style.display = 'block'
+      }
     } catch (err) {
       appendOutput(`Error generating AllMessage: ${err.message}`)
-      console.error('Generate AllMessage error:', err)
+      outputDiv.textContent = `Error: ${err.message}`
+      console.error('Round 1 Generation error:', err)
     }
 
   } catch (err) {
-    appendOutput(`Error generating AllMessage: ${err.message}`)
-    console.error('Generate AllMessage error:', err)
+    appendOutput(`Error in Round 1 Generation: ${err.message}`)
+    console.error('Round 1 Generation error:', err)
   }
 }
 
-// Send AllMessage to connected peer
-window['send-all-message'].onclick = async () => {
+// Round 2 Generation: Process AllMessages to generate threshold key
+window['run-round2-generation'].onclick = async () => {
   try {
     // Check if we have a generated AllMessage
     if (!generatedAllMessage) {
-      appendOutput('No AllMessage generated. Please generate an AllMessage first.')
-      return
-    }
-
-    // Check if we have a connected peer
-    if (!sessionState.peerMultiaddr) {
-      appendOutput('No peer connected. Please connect to a peer first.')
-      return
-    }
-
-    appendOutput('Sending AllMessage to connected peer...')
-    appendOutput(`AllMessage size: ${generatedAllMessage.length} bytes`)
-
-    // Convert AllMessage to hex string
-    const allMessageHex = Array.from(generatedAllMessage).map(b => b.toString(16).padStart(2, '0')).join('')
-    const messageToSend = `ALL_MESSAGE:${allMessageHex}`
-
-    appendOutput(`Sending: ${messageToSend.substring(0, 50)}...`)
-
-    // Ensure we have a chat stream
-    const streamReady = await handleChatStream()
-    if (!streamReady) {
-      return
-    }
-
-    // Send the AllMessage
-    await sendMessage(messageToSend)
-    appendOutput('✓ AllMessage sent successfully to connected peer')
-
-  } catch (err) {
-    appendOutput(`Error sending AllMessage: ${err.message}`)
-    console.error('Send AllMessage error:', err)
-  }
-
-}
-
-// Process AllMessages to generate threshold key
-window['process-all-messages'].onclick = async () => {
-  try {
-    // Check if we have a generated AllMessage
-    if (!generatedAllMessage) {
-      appendOutput('No generated AllMessage found. Please generate an AllMessage first.')
+      appendOutput('No generated AllMessage found. Please run Round 1 Generation first.')
       return
     }
 
@@ -2764,9 +2759,12 @@ window['process-all-messages'].onclick = async () => {
       return
     }
 
-    appendOutput('Processing AllMessages to generate threshold key...')
+    appendOutput('Round 2 Generation: Processing AllMessages to generate threshold key...')
     appendOutput(`Generated AllMessage: ${generatedAllMessage.length} bytes`)
     appendOutput(`Received AllMessage: ${receivedAllMessage.length} bytes`)
+
+    const outputDiv = document.getElementById('round2-generation-output')
+    outputDiv.textContent = 'Processing AllMessages...'
 
     try {
       const processing = window.thresholdSigning.processAllMessages({
@@ -2782,6 +2780,8 @@ window['process-all-messages'].onclick = async () => {
       appendOutput(`First 16 bytes: ${processing.thresholdPublicKeyArray.slice(0, 16).map(b => b.toString(16).padStart(2, '0')).join(' ')}`)
       appendOutput(`Threshold Public Key (hex): ${processing.thresholdPublicKeyHex}`)
 
+      outputDiv.textContent = `✓ Threshold key generated successfully!\nThreshold Public Key: ${processing.thresholdPublicKeyHex}\nSPP Output Message: ${processing.sppOutputMessageHex}`
+
       const normalizedProcessing = setThresholdProcessingState(processing) || processing
       appendOutput('✓ Threshold key processing completed successfully!')
       appendOutput('The threshold public key, SPP output message, and signing keypair are now available for use in threshold signing operations.')
@@ -2793,13 +2793,14 @@ window['process-all-messages'].onclick = async () => {
       }
     } catch (err) {
       appendOutput(`Error processing AllMessages: ${err.message}`)
-      console.error('Process AllMessages error:', err)
+      outputDiv.textContent = `Error: ${err.message}`
+      console.error('Round 2 Generation error:', err)
       return
     }
 
   } catch (err) {
-    appendOutput(`Error processing AllMessages: ${err.message}`)
-    console.error('Process AllMessages error:', err)
+    appendOutput(`Error in Round 2 Generation: ${err.message}`)
+    console.error('Round 2 Generation error:', err)
   }
 }
 
@@ -2848,11 +2849,6 @@ const updateRound1StateAndUi = (result, { ownerAddress = null, source = 'runtime
       <p><strong>Nonces (${noncesLength} bytes):</strong> ${noncesHexSummary?.substring(0, 64) ?? 'n/a'}...</p>
       <p><strong>Commitments (${commitmentsLength} bytes):</strong> ${commitmentsHexSummary?.substring(0, 64) ?? 'n/a'}...</p>
     `
-  }
-
-  const sendCommitmentsButton = document.getElementById('send-round1-commitments')
-  if (sendCommitmentsButton) {
-    sendCommitmentsButton.style.display = 'block'
   }
 
   const round2Actions = document.getElementById('round2-signing-actions')
@@ -3039,6 +3035,33 @@ window['run-round1-signing'].onclick = async () => {
       ownerAddress: registeredAddress,
       source: 'round1-signing'
     })
+
+    // Automatically send commitments to connected peer
+    if (round1Commitments && round1Commitments.length > 0) {
+      if (sessionState.peerMultiaddr) {
+        try {
+          appendOutput('Sending Round 1 commitments to connected peer...')
+          appendOutput(`Commitments size: ${round1Commitments.length} bytes`)
+
+          // Convert commitments to hex string
+          const commitmentsHex = round1Commitments.map(b => b.toString(16).padStart(2, '0')).join('')
+          const messageToSend = `ROUND1_COMMITMENTS:${commitmentsHex}`
+
+          // Ensure we have a chat stream
+          const streamReady = await handleChatStream()
+          if (streamReady) {
+            // Send the commitments
+            await sendMessage(messageToSend)
+            appendOutput('✓ Round 1 commitments sent successfully to connected peer')
+          }
+        } catch (err) {
+          appendOutput(`Error sending commitments: ${err.message}`)
+          console.error('Send commitments error:', err)
+        }
+      } else {
+        appendOutput('No peer connected. Commitments generated but not sent.')
+      }
+    }
 
   } catch (err) {
     appendOutput(`Error in Round 1 signing: ${err.message}`)
@@ -3454,42 +3477,6 @@ window['run-round2-signing'].onclick = async () => {
   } catch (err) {
     appendOutput(`Error in Round 2 signing: ${err.message}`)
     console.error('Round 2 signing error:', err)
-  }
-}
-
-// Send Round 1 Commitments Handler
-window['send-round1-commitments'].onclick = async () => {
-  try {
-    if (!round1Commitments) {
-      appendOutput('No commitments available. Please run Round 1 signing first.')
-      return
-    }
-
-    if (!sessionState.peerMultiaddr) {
-      appendOutput('No peer connected. Please connect to a peer first.')
-      return
-    }
-
-    appendOutput('Sending Round 1 commitments to connected peer...')
-    appendOutput(`Commitments size: ${round1Commitments.length} bytes`)
-
-    // Convert commitments to hex string
-    const commitmentsHex = round1Commitments.map(b => b.toString(16).padStart(2, '0')).join('')
-    const messageToSend = `ROUND1_COMMITMENTS:${commitmentsHex}`
-
-    // Ensure we have a chat stream
-    const streamReady = await handleChatStream()
-    if (!streamReady) {
-      return
-    }
-
-    // Send the commitments
-    await sendMessage(messageToSend)
-    appendOutput('✓ Round 1 commitments sent successfully to connected peer')
-
-  } catch (err) {
-    appendOutput(`Error sending commitments: ${err.message}`)
-    console.error('Send commitments error:', err)
   }
 }
 
