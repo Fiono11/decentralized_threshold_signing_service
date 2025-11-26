@@ -242,10 +242,10 @@
         </form>
       </section>
 
-      <!-- WASM Threshold Signing Section -->
-      <section class="section" aria-label="Threshold signing with SimplPedPoP">
-        <h2>🔐 Threshold Signing (SimplPedPoP)</h2>
-        <form role="form" aria-label="Threshold signing configuration">
+      <!-- Threshold Key Generation Section -->
+      <section class="section" aria-label="Threshold key generation">
+        <h2>🔑 Threshold Key Generation</h2>
+        <form role="form" aria-label="Threshold key generation configuration">
           <label for="threshold-secret-key-input">Secret Key (hex format):</label>
           <input type="text" id="threshold-secret-key-input"
             placeholder="Enter secret key in hex format (e.g., 0x1234...abcd)" value="" />
@@ -263,6 +263,13 @@
             <button type="button" id="send-all-message">Send AllMessage to Connected Peer</button>
             <button type="button" id="process-all-messages">Process AllMessages (Generate Threshold Key)</button>
           </div>
+        </form>
+      </section>
+
+      <!-- WASM Threshold Signing Section -->
+      <section class="section" aria-label="Threshold signing with SimplPedPoP">
+        <h2>🔐 Threshold Signing</h2>
+        <form role="form" aria-label="Threshold signing configuration">
           <div id="round1-signing-actions" style="margin-top: 10px;">
             <h3>Round 1 Signing</h3>
             <label for="round1-context-input">Context (optional):</label>

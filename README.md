@@ -262,7 +262,7 @@ Before starting the threshold key generation process, ensure that:
 **For Peer 1 (First Browser - `http://localhost:5173`):**
 
 1. **Generate AllMessage:**
-   - In the "Threshold Signing (SimplPedPoP)" section, enter your secret key in the "Secret Key" field (e.g., `0x473a77675b8e77d90c1b6dc2dbe6ac533b0853790ea8bcadf0ee8b5da4cfbbce`)
+   - In the "Threshold Signing" section, enter your secret key in the "Secret Key" field (e.g., `0x473a77675b8e77d90c1b6dc2dbe6ac533b0853790ea8bcadf0ee8b5da4cfbbce`)
    - In the "Recipients" field, enter the SS58 addresses of all participants (including yourself), separated by commas (e.g., `5CXkZyy4S5b3w16wvKA2hUwzp5q2y7UtRPkXnW97QGvDN8Jw,5Gma8SNsn6rkQf9reAWFQ9WKq8bwwHtSzwMYtLTdhYsGPKiy`)
    - Enter the threshold value (e.g., `2` for a 2-of-2 threshold)
    - Click "Generate AllMessage"
@@ -287,7 +287,7 @@ Before starting the threshold key generation process, ensure that:
 **For Peer 2 (Second Browser - `http://localhost:5174`):**
 
 1. **Generate AllMessage:**
-   - In the "Threshold Signing (SimplPedPoP)" section, enter your secret key in the "Secret Key" field (e.g., `0xdb9ddbb3d6671c4de8248a4fba95f3d873dc21a0434b52951bb33730c1ac93d7`)
+   - In the "Threshold Signing" section, enter your secret key in the "Secret Key" field (e.g., `0xdb9ddbb3d6671c4de8248a4fba95f3d873dc21a0434b52951bb33730c1ac93d7`)
    - In the "Recipients" field, enter the SS58 addresses of all participants (including yourself), separated by commas (e.g., `5CXkZyy4S5b3w16wvKA2hUwzp5q2y7UtRPkXnW97QGvDN8Jw,5Gma8SNsn6rkQf9reAWFQ9WKq8bwwHtSzwMYtLTdhYsGPKiy`)
    - Enter the threshold value (e.g., `2` for a 2-of-2 threshold)
    - The threshold value and recipient list must be identical for all peers
