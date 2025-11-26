@@ -248,65 +248,91 @@ docker compose up -d
    - `Ctrl+C` in the relay server terminal (non Docker) or `docker compose stop relay-server` 
    - Verify that both peers maintain their direct WebRTC connection
 
-### Threshold Key Generation Steps
+### Threshold Key Generation and Signing Steps
 
-After establishing a peer-to-peer connection, each peer can participate in the distributed key generation (DKG) process to generate a shared threshold public key. The following steps must be performed by each peer in the threshold signing group:
+After establishing a peer-to-peer connection, each peer can participate in the distributed key generation (DKG) process to generate a shared threshold public key, and then use that key to create threshold signatures. The following steps must be performed by each peer in the threshold signing group:
 
 #### Prerequisites
 
 Before starting the threshold key generation process, ensure that:
 - Both peers have established a direct WebRTC connection with each other (see steps 1-5 above)
 
-#### Step-by-Step Process
+#### Part 1: Threshold Key Generation
 
-**For Peer 1 (First Browser - `http://localhost:5173`):**
+**For Both Peers:**
 
-1. **Generate AllMessage:**
-   - In the "Threshold Signing" section, enter your secret key in the "Secret Key" field (e.g., `0x473a77675b8e77d90c1b6dc2dbe6ac533b0853790ea8bcadf0ee8b5da4cfbbce`)
+1. **Round 1 Generation:**
+   - In the "🔑 Threshold Key Generation" section, enter your secret key in the "Secret Key" field (e.g., `0x473a77675b8e77d90c1b6dc2dbe6ac533b0853790ea8bcadf0ee8b5da4cfbbce` for Peer 1, `0xdb9ddbb3d6671c4de8248a4fba95f3d873dc21a0434b52951bb33730c1ac93d7` for Peer 2)
    - In the "Recipients" field, enter the SS58 addresses of all participants (including yourself), separated by commas (e.g., `5CXkZyy4S5b3w16wvKA2hUwzp5q2y7UtRPkXnW97QGvDN8Jw,5Gma8SNsn6rkQf9reAWFQ9WKq8bwwHtSzwMYtLTdhYsGPKiy`)
    - Enter the threshold value (e.g., `2` for a 2-of-2 threshold)
-   - Click "Generate AllMessage"
+   - **Important:** The threshold value and recipient list must be identical for all peers
+   - Click "Run Round 1 Generation"
    - Verify you see: "✓ AllMessage generated successfully"
-   - The AllMessage will be displayed in hex format below the button
-
-2. **Send AllMessage to Peer 2:**
-   - Click "Send AllMessage to Connected Peer"
+   - The message will be automatically sent to the connected peer
    - Verify you see: "✓ AllMessage sent successfully to connected peer"
-   - The AllMessage is now sent to Peer 2 via the WebRTC connection
 
-3. **Receive AllMessage from Peer 2:**
-   - Wait for Peer 2 to send their AllMessage
+2. **Receive AllMessage from Other Peer:**
+   - Wait for the other peer to send their AllMessage
    - Verify you see: "✓ AllMessage received and stored" in the output log
 
-4. **Process AllMessages to Generate Threshold Key:**
-   - Once you have both your generated AllMessage and the received AllMessage from Peer 2, click "Process AllMessages (Generate Threshold Key)"
+3. **Round 2 Generation - Process AllMessages to Generate Threshold Key:**
+   - Once you have both your generated AllMessage and the received AllMessage from the other peer, click "Run Round 2 Generation"
    - Verify you see: "✓ Threshold key generated successfully"
    - The threshold public key will be displayed in SS58 format in the UI
    - Both peers should generate the same threshold public key
 
-**For Peer 2 (Second Browser - `http://localhost:5174`):**
+#### Part 2: Threshold Signing
 
-1. **Generate AllMessage:**
-   - In the "Threshold Signing" section, enter your secret key in the "Secret Key" field (e.g., `0xdb9ddbb3d6671c4de8248a4fba95f3d873dc21a0434b52951bb33730c1ac93d7`)
-   - In the "Recipients" field, enter the SS58 addresses of all participants (including yourself), separated by commas (e.g., `5CXkZyy4S5b3w16wvKA2hUwzp5q2y7UtRPkXnW97QGvDN8Jw,5Gma8SNsn6rkQf9reAWFQ9WKq8bwwHtSzwMYtLTdhYsGPKiy`)
-   - Enter the threshold value (e.g., `2` for a 2-of-2 threshold)
-   - The threshold value and recipient list must be identical for all peers
-   - Click "Generate AllMessage"
-   - Verify you see: "✓ AllMessage generated successfully"
+**For Both Peers:**
 
-2. **Send AllMessage to Peer 1:**
-   - Click "Send AllMessage to Connected Peer"
-   - Verify you see: "✓ AllMessage sent successfully to connected peer"
+4. **Round 1 Signing - Generate Commitments:**
+   - In the "🔐 Threshold Signing" section, optionally enter a context in the "Context" field (default: empty)
+   - Click "Run Round 1 Signing"
+   - Verify you see: "✓ Round 1 signing completed"
+   - The commitments will be automatically sent to the connected peer
+   - Verify you see: "✓ Round 1 commitments sent successfully to connected peer"
 
-3. **Receive AllMessage from Peer 1:**
-   - Wait for Peer 1 to send their AllMessage
-   - Verify you see: "✓ AllMessage received and stored" in the output log
+5. **Receive Commitments from Other Peer:**
+   - Wait for the other peer to send their commitments
+   - Verify you see: "✓ Round 1 commitments received and stored" in the output log
 
-4. **Process AllMessages to Generate Threshold Key:**
-   - Once you have both your generated AllMessage and the received AllMessage from Peer 1, click "Process AllMessages (Generate Threshold Key)"
-   - Verify you see: "✓ Threshold key generated successfully"
-   - The threshold public key will be displayed in SS58 format in the UI
-   - Verify that the threshold public key matches the one generated by Peer 1
+6. **Round 2 Signing - Generate Signing Package:**
+   - In the "Round 2 Signing" section, enter the payload to sign in the "Payload to Sign" field (e.g., `test payload to sign with threshold signature`)
+   - Optionally enter a context in the "Context" field (default: `substrate`)
+   - Click "Run Round 2 Signing"
+   - Verify you see: "✓ Round 2 signing completed"
+   - The signing package will be automatically sent to the connected peer
+   - Verify you see: "✓ Signing package sent successfully to connected peer"
+
+7. **Receive Signing Packages from Other Peer:**
+   - Wait for the other peer to send their signing package
+   - Verify you see: "✓ Signing package received and stored" in the output log
+
+#### Part 3: Signature Aggregation
+
+**For Both Peers:**
+
+8. **Aggregate Signing Packages:**
+   - Once you have both your signing package and the received signing package(s) from other peer(s), click "Agregate Signing Packages" (in the "🧪 Agregate Signing Packages" section)
+   - Verify you see: "✓ Signature aggregation completed"
+   - The aggregated signature will be displayed in hex format
+   - Both peers should generate the same aggregated signature
+
+#### Part 4: Extrinsic Submission
+
+**For One Peer (or Both):**
+
+9. **Submit Signed Extrinsic:**
+   - Click "Submit Signed Extrinsic" (in the "🛠️ Construct and Submit the Signed Extrinsic" section)
+   - The application will:
+     - Verify the aggregated signature locally
+     - Construct the signed extrinsic
+     - Check account balance and fee requirements
+     - Submit the extrinsic to the blockchain
+   - Verify you see: "✓ Extrinsic submitted successfully. TxHash: [transaction hash]"
+   - The transaction hash can be used to track the transaction on the blockchain
+
+**Note:** Only one peer needs to submit the extrinsic, as both peers will have generated the same aggregated signature. However, both peers can submit if desired (the second submission will fail if the transaction is already included in a block).
 
 ### Cleanup
 
