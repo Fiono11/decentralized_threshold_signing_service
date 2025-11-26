@@ -19,7 +19,6 @@ import { hexToU8a, u8aToHex } from '@polkadot/util'
 import { createEd25519PeerId } from '@libp2p/peer-id-factory'
 import initOlaf, { wasm_simplpedpop_contribute_all, wasm_keypair_from_secret, wasm_simplpedpop_recipient_all, wasm_aggregate_threshold_signature, wasm_threshold_sign_round1, wasm_threshold_sign_round2 } from './olaf/pkg/olaf.js'
 import thresholdKeysCache from './test/threshold-keys-cache.json' assert { type: 'json' }
-import polkadotRound1Cache from './test/polkadot-round1-cache.json' assert { type: 'json' }
 
 // Constants
 const WEBRTC_CODE = WebRTC.code
@@ -732,79 +731,6 @@ const ensureCachedThresholdSigningForAddress = (ss58Address) => {
   window.cachedThresholdSigning = artifacts
   return { artifacts, updated: true }
 }
-
-const buildPolkadotRound1Cache = () => {
-  if (!polkadotRound1Cache || typeof polkadotRound1Cache !== 'object') {
-    return null
-  }
-
-  const cacheSource = 'polkadot-round1-cache.json'
-  const sourcePeers = polkadotRound1Cache.peers
-  const normalizedPeers = {}
-
-  const normalizeRound1Peer = (address, entry) => {
-    if (!entry || typeof entry !== 'object') {
-      console.warn(`${cacheSource} missing peer entry for ${address}`)
-      return false
-    }
-
-    const signingKeypair = normalizeCacheEntry(entry.signingKeypair, `peers.${address}.signingKeypair`, cacheSource)
-    const nonces = normalizeCacheEntry(entry.nonces, `peers.${address}.nonces`, cacheSource)
-    const commitments = normalizeCacheEntry(entry.commitments, `peers.${address}.commitments`, cacheSource)
-
-    if (!signingKeypair || !nonces || !commitments) {
-      return false
-    }
-
-    normalizedPeers[address] = Object.freeze({
-      signingKeypair,
-      nonces,
-      commitments
-    })
-
-    return true
-  }
-
-  if (sourcePeers && typeof sourcePeers === 'object') {
-    for (const address of DEFAULT_PEER_SS58_ADDRESSES) {
-      if (!normalizeRound1Peer(address, sourcePeers[address])) {
-        return null
-      }
-    }
-  } else {
-    const legacyEntries = [
-      {
-        address: DEFAULT_PEER_SS58_ADDRESSES[0],
-        signingKeypair: polkadotRound1Cache.signingKeypair1,
-        nonces: polkadotRound1Cache.noncesA,
-        commitments: polkadotRound1Cache.commitmentsA
-      },
-      {
-        address: DEFAULT_PEER_SS58_ADDRESSES[1],
-        signingKeypair: polkadotRound1Cache.signingKeypair2,
-        nonces: polkadotRound1Cache.noncesB,
-        commitments: polkadotRound1Cache.commitmentsB
-      }
-    ]
-
-    if (!legacyEntries.every((entry) => entry.signingKeypair && entry.nonces && entry.commitments)) {
-      console.warn(`${cacheSource} is missing required Round 1 cache entries; ignoring cache`)
-      return null
-    }
-
-    for (const entry of legacyEntries) {
-      if (!normalizeRound1Peer(entry.address, entry)) {
-        return null
-      }
-    }
-  }
-
-  return Object.freeze({
-    peers: Object.freeze(normalizedPeers)
-  })
-}
-
-const POLKADOT_ROUND1_CACHE = buildPolkadotRound1Cache()
 
 const EXTRINSIC_TEST_CONFIG = Object.freeze({
   recipients: [...DEFAULT_PEER_SS58_ADDRESSES],
