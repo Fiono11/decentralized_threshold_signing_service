@@ -280,6 +280,7 @@ Before starting the threshold key generation process, ensure that:
    - Verify you see: "✓ Threshold key generated successfully"
    - The threshold public key will be displayed in SS58 format in the UI
    - Both peers should generate the same threshold public key
+   - The threshold public key is cached in the browser storage and can be reused for the threshold signing
 
 #### Part 2: Threshold Signing
 
@@ -297,7 +298,7 @@ Before starting the threshold key generation process, ensure that:
    - Verify you see: "✓ Round 1 commitments received and stored" in the output log
 
 6. **Round 2 Signing - Generate Signing Package:**
-   - In the "Round 2 Signing" section, enter the payload to sign in the "Payload to Sign" field (e.g., `test payload to sign with threshold signature`)
+   - In the "Round 2 Signing" section, optionally enter the payload to sign in the "Payload to Sign" field
    - Optionally enter a context in the "Context" field (default: `substrate`)
    - Click "Run Round 2 Signing"
    - Verify you see: "✓ Round 2 signing completed"
@@ -310,17 +311,16 @@ Before starting the threshold key generation process, ensure that:
 
 #### Part 3: Signature Aggregation
 
-**For Both Peers:**
+**For One of the Peers:**
 
 8. **Aggregate Signing Packages:**
    - Once you have both your signing package and the received signing package(s) from other peer(s), click "Agregate Signing Packages" (in the "🧪 Agregate Signing Packages" section)
    - Verify you see: "✓ Signature aggregation completed"
    - The aggregated signature will be displayed in hex format
-   - Both peers should generate the same aggregated signature
 
 #### Part 4: Extrinsic Submission
 
-**For One Peer (or Both):**
+**For One of the Peers:**
 
 9. **Submit Signed Extrinsic:**
    - Click "Submit Signed Extrinsic" (in the "🛠️ Construct and Submit the Signed Extrinsic" section)
