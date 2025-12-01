@@ -1846,12 +1846,7 @@ test.describe('Polkadot API Integration with Threshold Signing:', () => {
 
         // Verify the signature using crypto utilities
         // Verify against the signable payload (ExtrinsicPayload) that was actually signed
-        // The threshold signing library uses a context, so we need to prepend it to the message
-        const contextBytes = new TextEncoder().encode(signingContext)
-        const messageWithContext = new Uint8Array(contextBytes.length + signableU8a.length)
-        messageWithContext.set(contextBytes, 0)
-        messageWithContext.set(signableU8a, contextBytes.length)
-        const verified = sr25519Verify(messageWithContext, aggregatedSignature, thresholdPubkey)
+        const verified = sr25519Verify(signableU8a, aggregatedSignature, thresholdPubkey)
         console.log('Signature valid:', verified)
 
         // Check account balance and estimate fee before submitting
