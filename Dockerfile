@@ -22,9 +22,26 @@ RUN npm ci && \
     npm cache clean --force && \
     rm -rf /tmp/*
 
+# ============== WASM BUILDER ==============
+FROM rust:1.83-slim AS wasm-builder
+WORKDIR /build
+RUN apt-get update && apt-get install -y \
+    pkg-config \
+    libssl-dev \
+    build-essential \
+    curl \
+    && rm -rf /var/lib/apt/lists/* /tmp/*
+RUN rustup toolchain install nightly --profile minimal && \
+    rustup default nightly
+COPY olaf ./olaf
+WORKDIR /build/olaf
+RUN curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh && \
+    wasm-pack build --release --target web --out-dir pkg --out-name olaf
+
 # ============== RELAY SERVER ==============
 FROM base AS relay-server
 COPY relay.js ./
+COPY config ./config
 EXPOSE 8080
 ENV EXTERNAL_PORT=8080 NODE_ENV=production
 CMD ["node", "relay.js"]
@@ -32,6 +49,7 @@ CMD ["node", "relay.js"]
 # ============== CLIENT DEV ==============
 FROM dev-deps AS client-dev
 COPY . .
+COPY --from=wasm-builder /build/olaf/pkg ./olaf/pkg
 EXPOSE 5173
 ENV NODE_ENV=development
 CMD ["npm", "run", "start:cloud"]
@@ -86,6 +104,7 @@ RUN npx playwright install chromium --with-deps && \
 
 # Copy source code
 COPY . .
+COPY --from=wasm-builder /build/olaf/pkg ./olaf/pkg
 
 # Set environment variable to indicate we're running in Docker
 ENV DOCKER=true
