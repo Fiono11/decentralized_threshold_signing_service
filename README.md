@@ -112,6 +112,17 @@ Two browsers will exchange messages and produce a valid threshold signature over
 #### Prerequisites
 - Node.js installed
 - npm or yarn package manager
+- `wasm-pack` (required to build the `olaf` WebAssembly module when running outside Docker)
+
+To install `wasm-pack`, you can use either of the following methods:
+
+```bash
+# Using cargo (requires Rust toolchain)
+cargo install wasm-pack
+
+# Or using the official installer script
+curl https://drager.github.io/wasm-pack/installer/init.sh -sSf | sh
+```
 
 #### Relay Peer ID configuration
 - The relay server loads a base64-encoded Ed25519 private key from `config/relay-peer-key.json`. Because the private key is hardcoded, every relay startup reuses the exact same LibP2P identity.
@@ -136,22 +147,34 @@ npm test
 
 #### Manual Testing
 
-1. **Start the relay server:**
+1. **Install dependencies:**
+   ```bash
+   npm install
+   ```
+
+2. **Build the Olaf WASM module (required for local `npm start`):**
+   ```bash
+   cd olaf
+   wasm-pack build --release --target web --out-dir pkg --out-name olaf
+   cd ..
+   ```
+
+3. **Start the relay server:**
    ```bash
    npm run relay
    ```
 
-2. **Start the first client application on port 5173:**
+4. **Start the first client application on port 5173 (in a new terminal):**
    ```bash
    npm start
    ```
 
-3. **Start the second client application on port 5174 (in a new terminal):**
+5. **Start the second client application on port 5174 (in a new terminal):**
    ```bash
    npm start
    ```
 
-4. **Follow the manual testing steps below** (same process for both Docker and non-Docker)
+6. **Follow the manual testing steps below** (same process for both Docker and non-Docker)
 
 ### With Docker
 
