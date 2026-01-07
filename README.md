@@ -305,13 +305,15 @@ Before starting the threshold key generation process, ensure that:
    - Both peers should generate the same threshold public key
    - The threshold public key is cached in the browser storage and can be reused for the threshold signing
 
+4. **Fund the Threshold Key:**
+   - Using the Westend Relay [faucet](https://faucet.polkadot.io/westend?parachain=0), for example.
+
 #### Part 2: Threshold Signing
 
 **For Both Peers:**
 
 4. **Round 1 Signing - Generate Commitments:**
-   - In the "🔐 Threshold Signing" section, optionally enter a context in the "Context" field (default: empty)
-   - Click "Run Round 1 Signing"
+   - In the "🔐 Threshold Signing" section, click "Run Round 1 Signing"
    - Verify you see: "✓ Round 1 signing completed"
    - The commitments will be automatically sent to the connected peer
    - Verify you see: "✓ Round 1 commitments sent successfully to connected peer"
