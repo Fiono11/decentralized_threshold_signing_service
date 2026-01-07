@@ -355,7 +355,7 @@ Before starting the threshold key generation process, ensure that:
      - Check account balance and fee requirements
      - Submit the extrinsic to the blockchain
    - Verify you see: "✓ Extrinsic submitted successfully. TxHash: [transaction hash]"
-   - The transaction hash can be used to track the transaction on the blockchain
+   - The transaction hash can be used to track the transaction on a blockchain explorer, for example this [one](https://westend.subscan.io)
 
 **Note:** Only one peer needs to submit the extrinsic, as both peers will have generated the same aggregated signature. However, both peers can submit if desired (the second submission will fail if the transaction is already included in a block).
 
