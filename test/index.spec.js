@@ -277,7 +277,7 @@ test.describe('browser to browser example:', () => {
 
     // Wait for permission request to appear on pageA and reject it
     const permissionRequestsSection = pageA.locator('#permission-requests')
-    await expect(permissionRequestsSection).toContainText('Incoming Connection Request', { timeout: 10000 })
+    await expect(permissionRequestsSection).toContainText('Incoming Connection Request', { timeout: 3000 })
 
     const rejectButton = permissionRequestsSection.locator('button:has-text("Reject")')
     await rejectButton.click()
@@ -334,7 +334,7 @@ const connectViaSS58AddressWithPermission = async (requesterPage, acceptorPage, 
 
   // Wait for permission request to appear on acceptor page
   const permissionRequestsSection = acceptorPage.locator('#permission-requests')
-  await expect(permissionRequestsSection).toContainText('Incoming Connection Request', { timeout: 10000 })
+  await expect(permissionRequestsSection).toContainText('Incoming Connection Request', { timeout: 3000 })
   await expect(permissionRequestsSection).toContainText('From:')
 
   // Accept the permission request
@@ -378,7 +378,7 @@ test.describe('WASM Integration Tests for Olaf Threshold Public Key Generation:'
     await page.goto(testUrlA)
 
     // Wait for WASM module to be initialized
-    await page.waitForFunction(() => window.wasmReady === true, { timeout: 30000 })
+    await page.waitForFunction(() => window.wasmReady === true, { timeout: 3000 })
   })
 
   test('should successfully generate AllMessage for participant 1', async ({ page }) => {
@@ -440,14 +440,14 @@ test.describe('WASM Integration Tests for Olaf Threshold Public Key Generation:'
   })
 
   test('should produce identical threshold keys when both peers process AllMessages', async ({ page: pageA, context }) => {
-    test.setTimeout(120000)
+    test.setTimeout(3000)
 
     const pageB = await context.newPage()
     await pageB.goto(testUrlA)
 
     // Wait for WASM to be ready on both pages
-    await pageA.waitForFunction(() => window.wasmReady === true, { timeout: 30000 })
-    await pageB.waitForFunction(() => window.wasmReady === true, { timeout: 30000 })
+    await pageA.waitForFunction(() => window.wasmReady === true, { timeout: 3000 })
+    await pageB.waitForFunction(() => window.wasmReady === true, { timeout: 3000 })
 
     // Generate AllMessages for both participants
     const allMessageA = await pageA.evaluate(({ secretKey, recipients, threshold }) => {
@@ -530,7 +530,7 @@ test.describe('WASM Integration Tests for Olaf Threshold Public Key Generation:'
   })
 
   test('should run complete SimplPedPoP protocol with test keys (port of Rust test)', async ({ page }) => {
-    test.setTimeout(120000)
+    test.setTimeout(3000)
 
     const result = await page.evaluate(({ secretKey1, secretKey2, recipients, threshold }) => {
       console.log('Running SimplPedPoP protocol with test keys:')
@@ -688,18 +688,18 @@ test.describe('Threshold Signing Rounds Tests:', () => {
     await page.goto(testUrlA)
 
     // Wait for WASM module to be initialized
-    await page.waitForFunction(() => window.wasmReady === true, { timeout: 30000 })
+    await page.waitForFunction(() => window.wasmReady === true, { timeout: 3000 })
   })
 
   test('should successfully run Round 1 signing for both participants', async ({ page: pageA, context }) => {
-    test.setTimeout(120000)
+    test.setTimeout(3000)
 
     const pageB = await context.newPage()
     await pageB.goto(testUrlA)
 
     // Wait for WASM to be ready on both pages
-    await pageA.waitForFunction(() => window.wasmReady === true, { timeout: 30000 })
-    await pageB.waitForFunction(() => window.wasmReady === true, { timeout: 30000 })
+    await pageA.waitForFunction(() => window.wasmReady === true, { timeout: 3000 })
+    await pageB.waitForFunction(() => window.wasmReady === true, { timeout: 3000 })
 
     // First, generate threshold keys using SimplPedPoP
     const thresholdResults = await generateThresholdKeys(pageA, pageB)
@@ -759,14 +759,14 @@ test.describe('Threshold Signing Rounds Tests:', () => {
   })
 
   test('should successfully run Round 2 signing for both participants', async ({ page: pageA, context }) => {
-    test.setTimeout(120000)
+    test.setTimeout(3000)
 
     const pageB = await context.newPage()
     await pageB.goto(testUrlA)
 
     // Wait for WASM to be ready on both pages
-    await pageA.waitForFunction(() => window.wasmReady === true, { timeout: 30000 })
-    await pageB.waitForFunction(() => window.wasmReady === true, { timeout: 30000 })
+    await pageA.waitForFunction(() => window.wasmReady === true, { timeout: 3000 })
+    await pageB.waitForFunction(() => window.wasmReady === true, { timeout: 3000 })
 
     // First, generate threshold keys using SimplPedPoP
     const thresholdResults = await generateThresholdKeys(pageA, pageB)
@@ -856,14 +856,14 @@ test.describe('Threshold Signing Rounds Tests:', () => {
   })
 
   test('should successfully aggregate threshold signature', async ({ page: pageA, context }) => {
-    test.setTimeout(120000)
+    test.setTimeout(3000)
 
     const pageB = await context.newPage()
     await pageB.goto(testUrlA)
 
     // Wait for WASM to be ready on both pages
-    await pageA.waitForFunction(() => window.wasmReady === true, { timeout: 30000 })
-    await pageB.waitForFunction(() => window.wasmReady === true, { timeout: 30000 })
+    await pageA.waitForFunction(() => window.wasmReady === true, { timeout: 3000 })
+    await pageB.waitForFunction(() => window.wasmReady === true, { timeout: 3000 })
 
     // First, generate threshold keys using SimplPedPoP
     const thresholdResults = await generateThresholdKeys(pageA, pageB)
@@ -899,14 +899,14 @@ test.describe('Threshold Signing Rounds Tests:', () => {
   })
 
   test('should run complete threshold signing protocol (port of Rust test)', async ({ page: pageA, context }) => {
-    test.setTimeout(120000)
+    test.setTimeout(3000)
 
     const pageB = await context.newPage()
     await pageB.goto(testUrlA)
 
     // Wait for WASM to be ready on both pages
-    await pageA.waitForFunction(() => window.wasmReady === true, { timeout: 30000 })
-    await pageB.waitForFunction(() => window.wasmReady === true, { timeout: 30000 })
+    await pageA.waitForFunction(() => window.wasmReady === true, { timeout: 3000 })
+    await pageB.waitForFunction(() => window.wasmReady === true, { timeout: 3000 })
 
     const result = await pageA.evaluate(({
       secretKey1,
@@ -1546,11 +1546,11 @@ test.describe('Polkadot API Integration with Threshold Signing:', () => {
     await page.goto(testUrlA)
 
     // Wait for WASM module to be initialized
-    await page.waitForFunction(() => window.wasmReady === true, { timeout: 30000 })
+    await page.waitForFunction(() => window.wasmReady === true, { timeout: 3000 })
   })
 
   test('should sign Polkadot extrinsic using threshold public key and threshold signing protocol', async ({ page: pageA, context }) => {
-    test.setTimeout(180000) // 3 minutes for Polkadot API calls
+    test.setTimeout(3000)
 
     // Capture browser console logs and forward them to test output
     // This must be set up before any evaluate calls that log to console
@@ -1605,8 +1605,8 @@ test.describe('Polkadot API Integration with Threshold Signing:', () => {
     await pageB.goto(testUrlA)
 
     // Wait for WASM to be ready on both pages
-    await pageA.waitForFunction(() => window.wasmReady === true, { timeout: 30000 })
-    await pageB.waitForFunction(() => window.wasmReady === true, { timeout: 30000 })
+    await pageA.waitForFunction(() => window.wasmReady === true, { timeout: 3000 })
+    await pageB.waitForFunction(() => window.wasmReady === true, { timeout: 3000 })
 
     // Step 1: Generate threshold keys using SimplPedPoP
     const thresholdResults = await generateThresholdKeys(pageA, pageB)
@@ -1978,6 +1978,431 @@ test.describe('Polkadot API Integration with Threshold Signing:', () => {
       console.log('   Send funds to the threshold account above to enable transaction submission')
     }
     console.log('=== END TEST RESULTS ===\n')
+
+    await pageB.close()
+  })
+
+  test('should sign Paseo extrinsic using threshold public key and threshold signing protocol', async ({ page: pageA, context }) => {
+    test.setTimeout(3000)
+
+    // Capture browser console logs and forward them to test output
+    // This must be set up before any evaluate calls that log to console
+    pageA.on('console', msg => {
+      const text = msg.text()
+      const type = msg.type()
+      // Print all console messages to terminal
+      if (type === 'log' || type === 'info') {
+        console.log(`[Browser] ${text}`)
+      } else if (type === 'error') {
+        console.error(`[Browser Error] ${text}`)
+      } else if (type === 'warn') {
+        console.warn(`[Browser Warn] ${text}`)
+      } else if (type === 'debug') {
+        console.log(`[Browser Debug] ${text}`)
+      } else {
+        console.log(`[Browser ${type}] ${text}`)
+      }
+    })
+
+    // Also capture page errors
+    pageA.on('pageerror', error => {
+      console.error(`[Browser Page Error] ${error.message}`)
+      console.error(`[Browser Page Error Stack] ${error.stack}`)
+    })
+
+    const pageB = await context.newPage()
+
+    pageB.on('console', msg => {
+      const text = msg.text()
+      const type = msg.type()
+      // Print all console messages to terminal
+      if (type === 'log' || type === 'info') {
+        console.log(`[Browser B] ${text}`)
+      } else if (type === 'error') {
+        console.error(`[Browser B Error] ${text}`)
+      } else if (type === 'warn') {
+        console.warn(`[Browser B Warn] ${text}`)
+      } else if (type === 'debug') {
+        console.log(`[Browser B Debug] ${text}`)
+      } else {
+        console.log(`[Browser B ${type}] ${text}`)
+      }
+    })
+
+    // Also capture page errors for pageB
+    pageB.on('pageerror', error => {
+      console.error(`[Browser B Page Error] ${error.message}`)
+      console.error(`[Browser B Page Error Stack] ${error.stack}`)
+    })
+
+    await pageB.goto(testUrlA)
+
+    // Wait for WASM to be ready on both pages
+    await pageA.waitForFunction(() => window.wasmReady === true, { timeout: 3000 })
+    await pageB.waitForFunction(() => window.wasmReady === true, { timeout: 3000 })
+
+    // Step 1: Generate threshold keys using SimplPedPoP
+    const thresholdResults = await generateThresholdKeys(pageA, pageB)
+
+    // Step 2: Use threshold public key to sign a Paseo extrinsic
+    const round1Results = await getPolkadotRound1SigningData(pageA, pageB, thresholdResults)
+    const thresholdPeerA = getPeerThresholdCacheEntry(thresholdResults, TEST_SS58_ADDRESS_A)
+    const thresholdPeerB = getPeerThresholdCacheEntry(thresholdResults, TEST_SS58_ADDRESS_B)
+    const round1PeerA = round1Results.peers[TEST_SS58_ADDRESS_A]
+    const round1PeerB = round1Results.peers[TEST_SS58_ADDRESS_B]
+
+    const result = await pageA.evaluate(async ({
+      secretKey1,
+      secretKey2,
+      recipients,
+      threshold,
+      thresholdPublicKey,
+      sppOutputMessage1,
+      sppOutputMessage2,
+      signingKeypair1,
+      signingKeypair2,
+      signingNonces1,
+      signingNonces2,
+      signingCommitments1,
+      signingCommitments2
+    }) => {
+      // Import Polkadot API from CDN (works in browser context)
+      const { ApiPromise, WsProvider } = await import('https://esm.sh/@polkadot/api@latest')
+      const { hexToU8a, u8aToHex } = await import('https://esm.sh/@polkadot/util@latest')
+      const { sr25519Verify } = await import('https://esm.sh/@polkadot/util-crypto@latest')
+
+      // 1. Connect to Paseo Network
+      const ws = new WsProvider('wss://rpc.ibp.network/paseo')
+      const api = await ApiPromise.create({ provider: ws })
+      await api.isReady
+
+      console.log('Connected to: Paseo Network')
+      console.log('Chain:', api.runtimeChain.toString())
+      console.log('Runtime version:', api.runtimeVersion.specVersion.toString())
+
+      try {
+        // 2. Build the remark call
+        const remarkText = 'Hello, Paseo!'
+        // Convert text to hex (browser-compatible)
+        const remarkHex = '0x' + Array.from(new TextEncoder().encode(remarkText))
+          .map(b => b.toString(16).padStart(2, '0')).join('')
+        const remark = api.tx.system.remark(remarkHex)
+
+        // 3. Use threshold public key (32 bytes) as AccountId32
+        const thresholdPubkey = new Uint8Array(thresholdPublicKey)
+        const accountId32 = api.registry.createType('AccountId32', thresholdPubkey)
+
+        console.log('--- Account Information ---')
+        console.log('Individual Participant Addresses (recipients):')
+        recipients.forEach((addr, idx) => {
+          console.log(`  Participant ${idx + 1}: ${addr}`)
+        })
+        console.log('')
+        console.log('Threshold Account (derived from threshold public key):')
+        console.log('  Threshold AccountId32 (hex):', accountId32.toHex())
+        console.log('  Threshold AccountId32 SS58 address:', accountId32.toHuman())
+        console.log('')
+        console.log('Note: The threshold account is different from individual participant addresses.')
+        console.log('The threshold account is the correct signer for threshold signatures.')
+        console.log('Individual participants sign collaboratively to produce a signature for the threshold account.')
+
+        // 4. Query nonce for that account (will be 0 if account doesn't exist)
+        let nonce
+        try {
+          const accountInfo = await api.query.system.account(accountId32)
+          nonce = accountInfo.nonce
+        } catch (error) {
+          // Account doesn't exist, use nonce 0
+          nonce = api.registry.createType('Index', 0)
+        }
+
+        // 5. Build payload fields
+        const era = api.registry.createType('ExtrinsicEra', '0x00') // immortal
+        const genesisHash = api.genesisHash.toHex()
+        const blockHash = genesisHash
+
+        const payloadFields = {
+          method: remark.method.toHex(),
+          nonce: nonce.toString(),
+          era: era.toHex(),
+          tip: '0',
+          specVersion: api.runtimeVersion.specVersion.toNumber(),
+          transactionVersion: api.runtimeVersion.transactionVersion.toNumber(),
+          genesisHash,
+          blockHash,
+        }
+
+        // 6. Create ExtrinsicPayload (this is what must be signed)
+        const extrinsicPayload = api.registry.createType(
+          'ExtrinsicPayload',
+          payloadFields,
+          { version: api.extrinsicVersion }
+        )
+
+        // 7. Export signable payload as Uint8Array (to be signed with threshold signing)
+        const signableU8a = extrinsicPayload.toU8a({ method: true })
+        const signableHex = u8aToHex(signableU8a)
+        console.log('--- Signable payload ---')
+        console.log('Signable payload length:', signableU8a.length, 'bytes')
+        console.log('Signable payload (hex):', signableHex.substring(0, 100) + '...')
+
+        // 8. Use threshold signing protocol to sign the payload
+        // Step 8a: Round 1 signing data (cached or freshly generated)
+        const nonces1 = signingNonces1
+        const commitments1 = signingCommitments1
+        const nonces2 = signingNonces2
+        const commitments2 = signingCommitments2
+
+        console.log('Round 1 signing data ready for both participants')
+        console.log('Signing nonces (participant 1):', JSON.stringify(nonces1))
+        console.log('Signing commitments (participant 1):', JSON.stringify(commitments1))
+        console.log('Signing nonces (participant 2):', JSON.stringify(nonces2))
+        console.log('Signing commitments (participant 2):', JSON.stringify(commitments2))
+
+        // Step 8b: Round 2 signing for both participants
+        const commitmentsArray = [commitments1, commitments2]
+        const commitmentsJson = JSON.stringify(commitmentsArray)
+        const commitmentsBytes = new TextEncoder().encode(commitmentsJson)
+
+        // Use the signable payload as the message to sign
+        const signingContext = 'substrate' // Standard context for Substrate
+
+        const signingPackage1 = window.wasm_threshold_sign_round2(
+          new Uint8Array(signingKeypair1),
+          new Uint8Array(nonces1),
+          commitmentsBytes,
+          new Uint8Array(sppOutputMessage1),
+          signableU8a, // Use the extrinsic payload as the payload
+          signingContext
+        )
+
+        const signingPackage2 = window.wasm_threshold_sign_round2(
+          new Uint8Array(signingKeypair2),
+          new Uint8Array(nonces2),
+          commitmentsBytes,
+          new Uint8Array(sppOutputMessage2),
+          signableU8a, // Use the extrinsic payload as the payload
+          signingContext
+        )
+
+        console.log('Round 2 completed for both participants')
+        console.log('Signing package 1:', signingPackage1.length, 'bytes')
+        console.log('Signing package 2:', signingPackage2.length, 'bytes')
+
+        // Step 8c: Aggregate threshold signature
+        const signingPackagesArray = [
+          Array.from(signingPackage1),
+          Array.from(signingPackage2)
+        ]
+        const signingPackagesJson = JSON.stringify(signingPackagesArray)
+        const signingPackagesBytes = new TextEncoder().encode(signingPackagesJson)
+        console.log('Signing packages JSON:', signingPackagesJson)
+        console.log('Signing packages bytes length:', signingPackagesBytes.length)
+        console.log(
+          'Signing packages bytes (hex preview):',
+          u8aToHex(signingPackagesBytes.slice(0, Math.min(signingPackagesBytes.length, 64))) +
+          (signingPackagesBytes.length > 64 ? '…' : '')
+        )
+
+        const aggregatedSignature = window.wasm_aggregate_threshold_signature(signingPackagesBytes)
+
+        console.log('Aggregated signature length:', aggregatedSignature.length, 'bytes')
+        console.log('Aggregated signature (hex):', u8aToHex(aggregatedSignature))
+
+        // 9. Attach the threshold signature to the extrinsic
+        // Validate signature length - Sr25519 requires exactly 64 bytes
+        if (aggregatedSignature.length !== 64) {
+          throw new Error(
+            `Signature length mismatch: expected 64 bytes for Sr25519, got ${aggregatedSignature.length} bytes. ` +
+            `The threshold signing library may return a compressed format that needs conversion.`
+          )
+        }
+
+        // Create Signature type explicitly using MultiSignature enum format
+        // Signature is actually a MultiSignature enum with variants: Ed25519, Sr25519, Ecdsa
+        // We need to explicitly specify Sr25519 variant (capitalized)
+        const signatureType = api.registry.createType('MultiSignature', {
+          Sr25519: aggregatedSignature
+        })
+
+        // Use addSignature() method to properly attach the signature to the extrinsic
+        // This is the correct way to manually sign an extrinsic in Polkadot API
+        const signerPayload = {
+          era,
+          nonce,
+          tip: '0'
+        }
+
+        console.log('accountId32 (hex):', accountId32.toHex())
+        console.log('accountId32 (SS58):', accountId32.toHuman())
+        console.log('MultiSignature (Sr25519, hex):', u8aToHex(aggregatedSignature))
+        console.log('Signer payload:', {
+          era: typeof signerPayload.era?.toHex === 'function' ? signerPayload.era.toHex() : String(signerPayload.era),
+          nonce: typeof signerPayload.nonce?.toString === 'function' ? signerPayload.nonce.toString() : String(signerPayload.nonce),
+          tip: signerPayload.tip
+        })
+
+        const signedExtrinsic = remark.addSignature(
+          accountId32,
+          signatureType,
+          signerPayload
+        )
+
+        // 10. Now you have the final signed extrinsic
+        const signedHex = signedExtrinsic.toHex()
+        console.log('--- Final signed extrinsic ---')
+        console.log('Signed extrinsic length:', signedHex.length, 'characters')
+        console.log('Signed extrinsic (first 200 chars):', signedHex.substring(0, 200) + '...')
+
+        console.log('--- Signed Extrinsic Information ---')
+        console.log('Is signed:', signedExtrinsic.isSigned);
+        console.log('Signer (should match threshold account):', signedExtrinsic.signer.toString());
+
+        // Verify that signer matches threshold account
+        const signerMatches = signedExtrinsic.signer.toString() === accountId32.toHuman()
+        console.log('Signer matches threshold account:', signerMatches);
+        if (!signerMatches) {
+          console.warn('WARNING: Signer does not match threshold account!');
+          console.warn('Expected (threshold account):', accountId32.toHuman());
+          console.warn('Actual (signer):', signedExtrinsic.signer.toString());
+        } else {
+          console.log('✓ Signer correctly matches threshold account');
+        }
+
+        // Verify the signature using crypto utilities
+        // Verify against the signable payload (ExtrinsicPayload) that was actually signed
+        const verified = sr25519Verify(signableU8a, aggregatedSignature, thresholdPubkey)
+        console.log('Signature valid:', verified)
+
+        // Check account balance and estimate fee before submitting
+        let txHash = null
+        let submissionError = null
+        let balance = null
+        let estimatedFee = null
+
+        try {
+          // Query account balance
+          const accountInfo = await api.query.system.account(accountId32)
+          balance = accountInfo.data.free.toBigInt()
+          const balancePAS = Number(balance) / 1e12
+          console.log('--- Account Balance Check ---')
+          console.log('Account balance:', balance.toString(), 'Planck (', balancePAS.toFixed(6), 'PAS)')
+
+          // Estimate transaction fee
+          const paymentInfo = await signedExtrinsic.paymentInfo(accountId32)
+          estimatedFee = paymentInfo.partialFee.toBigInt()
+          const feePAS = Number(estimatedFee) / 1e12
+          console.log('Estimated fee:', estimatedFee.toString(), 'Planck (', feePAS.toFixed(6), 'PAS)')
+
+          // Check if account has sufficient balance (fee + small buffer)
+          const requiredBalance = estimatedFee + BigInt(1e10) // fee + 0.00001 PAS buffer
+          const requiredBalancePAS = Number(requiredBalance) / 1e12
+          console.log('Required balance (fee + buffer):', requiredBalance.toString(), 'Planck (', requiredBalancePAS.toFixed(6), 'PAS)')
+
+          if (balance < requiredBalance) {
+            console.warn('')
+            console.warn('--- Insufficient Balance Warning ---')
+            console.warn(`Balance (${balancePAS.toFixed(6)} PAS) < Required (${requiredBalancePAS.toFixed(6)} PAS)`)
+            console.warn('Skipping extrinsic submission due to insufficient balance.')
+            console.warn('')
+            console.warn('⚠️  IMPORTANT: The THRESHOLD ACCOUNT must be funded (not individual participant accounts)')
+            console.warn('   The threshold account is the signer of the extrinsic and pays transaction fees.')
+            console.warn('   Individual participant accounts are only used for collaborative signing.')
+            console.warn('')
+            console.warn('   To fund the threshold account, send at least', requiredBalancePAS.toFixed(6), 'PAS to:')
+            console.warn('   Threshold Account Address:', accountId32.toHuman())
+            console.warn('   (This is the account derived from the threshold public key)')
+          } else {
+            console.log('✓ Balance sufficient for transaction')
+            console.log(`  Balance: ${balancePAS.toFixed(6)} PAS >= Required: ${requiredBalancePAS.toFixed(6)} PAS`)
+            // Submit extrinsic only if balance is sufficient
+            console.log('Submitting extrinsic to network...')
+            txHash = await api.rpc.author.submitExtrinsic(signedHex);
+            console.log('✓ Broadcasted TxHash:', txHash.toHex());
+          }
+        } catch (error) {
+          // Capture submission error but don't fail the test
+          submissionError = error.message
+          console.error('--- Extrinsic Submission Error ---')
+          console.error('Error:', submissionError)
+          console.error('Stack:', error.stack)
+          console.warn('This might be due to insufficient balance or network issues. The threshold signing test still passes.')
+        }
+
+        return {
+          success: true,
+          thresholdPublicKeyHex: u8aToHex(thresholdPubkey),
+          thresholdAccountId32Hex: accountId32.toHex(),
+          thresholdAccountId32SS58: accountId32.toHuman(),
+          nonce: nonce.toString(),
+          signablePayloadLength: signableU8a.length,
+          signablePayloadHex: signableHex,
+          aggregatedSignatureLength: aggregatedSignature.length,
+          aggregatedSignatureHex: u8aToHex(aggregatedSignature),
+          signedExtrinsicLength: signedHex.length,
+          signedExtrinsicHex: signedHex, // Full signed extrinsic
+          signatureValid: verified,
+          balance: balance ? balance.toString() : '0',
+          estimatedFee: estimatedFee ? estimatedFee.toString() : null,
+          txHash: txHash ? txHash.toHex() : null,
+          submissionError: submissionError || null
+        }
+      } finally {
+        await api.disconnect()
+      }
+    }, {
+      secretKey1: TEST_SECRET_KEY_1,
+      secretKey2: TEST_SECRET_KEY_2,
+      recipients: TEST_RECIPIENTS,
+      threshold: 2,
+      thresholdPublicKey: thresholdResults.thresholdPublicKey,
+      sppOutputMessage1: thresholdPeerA.sppOutputMessage,
+      sppOutputMessage2: thresholdPeerB.sppOutputMessage,
+      signingKeypair1: thresholdPeerA.signingKeypair,
+      signingKeypair2: thresholdPeerB.signingKeypair,
+      signingNonces1: round1PeerA.nonces,
+      signingNonces2: round1PeerB.nonces,
+      signingCommitments1: round1PeerA.commitments,
+      signingCommitments2: round1PeerB.commitments
+    })
+
+    // Validate results
+    expect(result.success).toBe(true)
+    expect(result.thresholdPublicKeyHex).toBeTruthy()
+    expect(result.thresholdAccountId32Hex).toBeTruthy()
+    expect(result.aggregatedSignatureLength).toBeGreaterThan(0)
+    expect(result.signedExtrinsicLength).toBeGreaterThan(0)
+
+    // Print all test results
+    console.log('\n=== TEST RESULTS (PASEO) ===')
+    console.log('✓ Threshold signing test passed for Paseo network')
+    console.log('✓ Threshold Public Key (hex):', result.thresholdPublicKeyHex)
+    console.log('✓ Threshold AccountId32 (hex):', result.thresholdAccountId32Hex)
+    console.log('✓ Threshold AccountId32 (SS58):', result.thresholdAccountId32SS58)
+    console.log('✓ Nonce:', result.nonce)
+    console.log('✓ Signable payload length:', result.signablePayloadLength, 'bytes')
+    console.log('✓ Signable payload (hex):', result.signablePayloadHex)
+    console.log('✓ Aggregated signature length:', result.aggregatedSignatureLength, 'bytes')
+    console.log('✓ Aggregated signature (hex):', result.aggregatedSignatureHex)
+    console.log('✓ Signature valid:', result.signatureValid)
+    console.log('✓ Signed extrinsic length:', result.signedExtrinsicLength, 'characters')
+    console.log('✓ Signed extrinsic (hex):', result.signedExtrinsicHex)
+    console.log('')
+    console.log('--- Account Funding Information ---')
+    console.log('⚠️  IMPORTANT: Fund the THRESHOLD ACCOUNT (not individual participant accounts)')
+    console.log('   Account to fund:', result.thresholdAccountId32SS58)
+    if (result.estimatedFee) {
+      const feePAS = (Number(result.estimatedFee) / 1e12).toFixed(6)
+      console.log('   Estimated fee:', feePAS, 'PAS')
+      console.log('   Recommended minimum:', (Number(result.estimatedFee) / 1e12 + 0.00001).toFixed(6), 'PAS')
+    }
+    if (result.txHash) {
+      console.log('   ✓ Transaction submitted successfully:', result.txHash)
+    } else if (result.submissionError) {
+      console.log('   ⚠️  Transaction not submitted (likely insufficient balance)')
+      console.log('   Send funds to the threshold account above to enable transaction submission')
+    }
+    console.log('=== END TEST RESULTS (PASEO) ===\n')
 
     await pageB.close()
   })
