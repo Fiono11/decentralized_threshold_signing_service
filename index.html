@@ -283,9 +283,12 @@
           </div>
           <div id="round2-signing-actions" style="margin-top: 10px;">
             <h3>Round 2 Signing</h3>
-            <label for="round2-payload-input">Payload to Sign (optional, default: Substrate extrinsic with remark "Hello
-              Westend
-              (threshold signing example)"):</label>
+            <label for="network-selector">Network:</label>
+            <select id="network-selector" style="width: var(--input-width-medium); padding: 8px 12px; border: 1px solid var(--border-color); border-radius: var(--border-radius); font-size: 14px; margin-bottom: var(--spacing-medium);">
+              <option value="westend">Westend (wss://westend-rpc.polkadot.io)</option>
+              <option value="paseo">Paseo (wss://rpc.ibp.network/paseo)</option>
+            </select>
+            <label for="round2-payload-input">Payload to Sign (optional, default: Substrate extrinsic with remark based on selected network):</label>
             <textarea id="round2-payload-input" rows="3"
               placeholder="Enter hex string or UTF-8 text. If empty, a Substrate extrinsic payload will be automatically constructed."></textarea>
             <label for="round2-context-input">Context (optional, default: substrate):</label>

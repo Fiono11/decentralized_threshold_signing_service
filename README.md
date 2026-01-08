@@ -27,6 +27,7 @@ The cryptographic logic is written in Rust and compiled to WebAssembly (WASM) fo
 **Core Functionality**:
 - Distributed Key Generation (DKG) to derive a shared threshold public key
 - Threshold Signing for signing Substrate/Kusama/Polkadot extrinsics
+- Multi-network support: Build and submit transactions to Westend or Paseo networks
 
 **State Management**: Key shares and protocol state are stored in browser-local storage (e.g., `IndexedDB`).
 
@@ -308,8 +309,9 @@ Before starting the threshold key generation process, ensure that:
    - Both peers should generate the same threshold public key
    - The threshold public key is cached in the browser storage and can be reused for the threshold signing
 
-4. **Fund the Threshold Key:**
-   - Using the Westend Relay [faucet](https://faucet.polkadot.io/westend?parachain=0), for example.
+4. **Fund the Threshold Account:**
+   - For Westend: Using the [Westend Relay faucet](https://faucet.polkadot.io/westend?parachain=0) or by transferring tokens from another account.
+   - For Paseo: Using a [Paseo faucet](https://faucet.polkadot.io/?parachain=0) or by transferring tokens from another account.
 
 #### Part 2: Threshold Signing
 
@@ -326,7 +328,8 @@ Before starting the threshold key generation process, ensure that:
    - Verify you see: "✓ Round 1 commitments received and stored" in the output log
 
 6. **Round 2 Signing - Generate Signing Package:**
-   - In the "Round 2 Signing" section, optionally enter the payload to sign in the "Payload to Sign" field
+   - In the "Round 2 Signing" section, select the target network from the "Network" dropdown (Westend or Paseo)
+   - Optionally enter the payload to sign in the "Payload to Sign" field (if empty, a Substrate extrinsic payload will be automatically constructed for the selected network)
    - Optionally enter a context in the "Context" field (default: `substrate`)
    - Click "Run Round 2 Signing"
    - Verify you see: "✓ Round 2 signing completed"
@@ -351,14 +354,17 @@ Before starting the threshold key generation process, ensure that:
 **For One of the Peers:**
 
 9. **Submit Signed Extrinsic:**
+   - Ensure the correct network is selected in the "Network" dropdown (should match the network used in Round 2 Signing)
    - Click "Submit Signed Extrinsic" (in the "🛠️ Construct and Submit the Signed Extrinsic" section)
    - The application will:
      - Verify the aggregated signature locally
      - Construct the signed extrinsic
      - Check account balance and fee requirements
-     - Submit the extrinsic to the blockchain
+     - Submit the extrinsic to the selected blockchain network
    - Verify you see: "✓ Extrinsic submitted successfully. TxHash: [transaction hash]"
-   - The transaction hash can be used to track the transaction on a blockchain explorer, for example this [one](https://westend.subscan.io)
+   - The transaction hash can be used to track the transaction on a blockchain explorer:
+     - For Westend: [Westend Subscan](https://westend.subscan.io)
+     - For Paseo: [Paseo](https://paseo.subscan.io/)
 
 **Note:** Only one peer needs to submit the extrinsic, as both peers will have generated the same aggregated signature. However, both peers can submit if desired (the second submission will fail if the transaction is already included in a block).
 

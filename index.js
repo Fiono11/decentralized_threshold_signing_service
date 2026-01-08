@@ -577,6 +577,31 @@ const ensureCachedThresholdSigningForAddress = (ss58Address) => {
   return { artifacts: null, updated: false }
 }
 
+const NETWORK_CONFIG = Object.freeze({
+  westend: {
+    name: 'Westend',
+    wsEndpoint: 'wss://westend-rpc.polkadot.io',
+    remarkText: 'Hello, Westend!'
+  },
+  paseo: {
+    name: 'Paseo',
+    wsEndpoint: 'wss://rpc.ibp.network/paseo',
+    remarkText: 'Hello, Paseo!'
+  }
+})
+
+const getSelectedNetwork = () => {
+  const selector = document.getElementById('network-selector')
+  if (!selector) {
+    return 'westend' // Default to westend if selector not found
+  }
+  return selector.value || 'westend'
+}
+
+const getNetworkConfig = (networkId) => {
+  return NETWORK_CONFIG[networkId] || NETWORK_CONFIG.westend
+}
+
 const EXTRINSIC_TEST_CONFIG = Object.freeze({
   recipients: [...DEFAULT_PEER_SS58_ADDRESSES],
   secretKeys: [
@@ -1628,8 +1653,8 @@ const initializeSession = async () => {
 // Use window.location.hostname to automatically connect to relay on the same server
 // This allows the client to work when deployed to any server (e.g., Google Cloud)
 // Fallback to localhost for local development
-const RELAY_HOST = typeof window !== 'undefined' && window.location.hostname 
-  ? window.location.hostname 
+const RELAY_HOST = typeof window !== 'undefined' && window.location.hostname
+  ? window.location.hostname
   : (import.meta.env?.VITE_RELAY_HOST || '127.0.0.1')
 const RELAY_PORT = import.meta.env?.VITE_RELAY_PORT || '8080'
 const RELAY_PEER_ID = '12D3KooWAWN7MuqoNvFdoVKuSDG3HJvQA1txQzu5ujri49nhm2hn'
@@ -2505,16 +2530,32 @@ window['submit-extrinsic'].onclick = async () => {
       return
     }
 
-    const wsEndpoint = signableDetails.wsEndpoint || EXTRINSIC_TEST_CONFIG.wsEndpoint
+    // Use network from signableDetails if available, otherwise use selected network
+    // Determine network from signableDetails or use current selection
+    let selectedNetwork = 'westend'
+    if (signableDetails.wsEndpoint) {
+      // Try to determine network from endpoint
+      if (signableDetails.wsEndpoint.includes('paseo')) {
+        selectedNetwork = 'paseo'
+      } else if (signableDetails.wsEndpoint.includes('westend')) {
+        selectedNetwork = 'westend'
+      }
+    } else {
+      selectedNetwork = getSelectedNetwork()
+    }
+    const networkConfig = getNetworkConfig(selectedNetwork)
+    const wsEndpoint = signableDetails.wsEndpoint || networkConfig.wsEndpoint
     const remarkHex = signableDetails.remarkHex ||
       (() => {
         const encoder = new TextEncoder()
-        return toHexString(encoder.encode(EXTRINSIC_TEST_CONFIG.remarkText), { withPrefix: true })
+        const remarkText = signableDetails.remarkText || networkConfig.remarkText
+        return toHexString(encoder.encode(remarkText), { withPrefix: true })
       })()
 
     const context = signableDetails.signingContext || EXTRINSIC_TEST_CONFIG.signingContext || ''
     const payloadHexPreview = signableDetails.signableHex?.substring(0, 100) ?? '(unavailable)'
 
+    appendOutput(`Using network: ${networkConfig.name}`)
     appendOutput(`Using WS endpoint: ${wsEndpoint}`)
     appendOutput(`Signable payload hex (preview): ${payloadHexPreview}...`)
 
@@ -2598,13 +2639,14 @@ window['submit-extrinsic'].onclick = async () => {
       if (balanceInfo && paymentInfo) {
         const free = balanceInfo.data.free.toBigInt()
         const fee = paymentInfo.partialFee.toBigInt()
-        const buffer = 10_000_000_000n // 0.00001 WND buffer
+        const buffer = 10_000_000_000n // 0.00001 buffer (works for both Westend and Paseo)
         const required = fee + buffer
-        const wnd = (value) => Number(value) / 1e12
+        const formatToken = (value) => Number(value) / 1e12
+        const tokenSymbol = selectedNetwork === 'paseo' ? 'PAS' : 'WND'
 
-        appendOutput(`Account balance: ${free.toString()} Planck (${wnd(free).toFixed(6)} WND)`)
-        appendOutput(`Estimated fee: ${fee.toString()} Planck (${wnd(fee).toFixed(6)} WND)`)
-        appendOutput(`Required balance (fee + buffer): ${required.toString()} Planck (${wnd(required).toFixed(6)} WND)`)
+        appendOutput(`Account balance: ${free.toString()} Planck (${formatToken(free).toFixed(6)} ${tokenSymbol})`)
+        appendOutput(`Estimated fee: ${fee.toString()} Planck (${formatToken(fee).toFixed(6)} ${tokenSymbol})`)
+        appendOutput(`Required balance (fee + buffer): ${required.toString()} Planck (${formatToken(required).toFixed(6)} ${tokenSymbol})`)
 
         if (free < required) {
           sufficientBalance = false
@@ -3083,7 +3125,11 @@ const constructSignablePayloadForRound2 = async () => {
     throw new Error('Threshold public key unavailable. Please process AllMessages first.')
   }
 
-  const { remarkText, wsEndpoint, signingContext } = EXTRINSIC_TEST_CONFIG
+  const selectedNetwork = getSelectedNetwork()
+  const networkConfig = getNetworkConfig(selectedNetwork)
+  const wsEndpoint = networkConfig.wsEndpoint
+  const remarkText = networkConfig.remarkText
+  const signingContext = EXTRINSIC_TEST_CONFIG.signingContext
   const provider = new WsProvider(wsEndpoint)
   let api = null
 
