@@ -145,6 +145,11 @@ EOF
   Copy the printed base64 value into `config/relay-peer-key.json` and the peer ID string into `config/relay-peer-id.js`, then restart the relay (and rerun tests) so everything picks up the refreshed identity.
 
 #### Automatic Testing
+
+```bash
+npx playwright install 
+```
+
 ```bash
 npm test
 ```

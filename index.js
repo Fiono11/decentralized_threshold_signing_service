@@ -1653,11 +1653,35 @@ const initializeSession = async () => {
 // Use window.location.hostname to automatically connect to relay on the same server
 // This allows the client to work when deployed to any server (e.g., Google Cloud)
 // Fallback to localhost for local development
-const RELAY_HOST = typeof window !== 'undefined' && window.location.hostname
+
+// Helper function to normalize hostname to IPv4 address
+const normalizeHostToIPv4 = (hostname) => {
+  // If it's already an IPv4 address, return as-is
+  const ipv4Regex = /^(\d{1,3}\.){3}\d{1,3}$/
+  if (ipv4Regex.test(hostname)) {
+    return hostname
+  }
+
+  // Resolve common hostnames to IPv4
+  if (hostname === 'localhost' || hostname === '127.0.0.1') {
+    return '127.0.0.1'
+  }
+
+  // For other hostnames that aren't IPv4, we can't resolve DNS in browser context
+  // without async operations. For now, fall back to 127.0.0.1 for safety.
+  // In production, you should set VITE_RELAY_HOST to an actual IPv4 address.
+  console.warn(`Hostname "${hostname}" is not an IPv4 address. Using 127.0.0.1 as fallback.`)
+  return '127.0.0.1'
+}
+
+const RELAY_HOST_RAW = typeof window !== 'undefined' && window.location.hostname
   ? window.location.hostname
   : (import.meta.env?.VITE_RELAY_HOST || '127.0.0.1')
+const RELAY_HOST = normalizeHostToIPv4(RELAY_HOST_RAW)
 const RELAY_PORT = import.meta.env?.VITE_RELAY_PORT || '8080'
 const RELAY_PEER_ID = '12D3KooWAWN7MuqoNvFdoVKuSDG3HJvQA1txQzu5ujri49nhm2hn'
+
+// Since normalizeHostToIPv4 always returns an IPv4 address, we can use /ip4/
 const RELAY_ADDRESS = `/ip4/${RELAY_HOST}/tcp/${RELAY_PORT}/ws/p2p/${RELAY_PEER_ID}`
 
 // Connection Management
