@@ -1625,8 +1625,13 @@ const initializeSession = async () => {
 }
 
 // Relay Configuration
-const RELAY_HOST = '127.0.0.1'
-const RELAY_PORT = '8080'
+// Use window.location.hostname to automatically connect to relay on the same server
+// This allows the client to work when deployed to any server (e.g., Google Cloud)
+// Fallback to localhost for local development
+const RELAY_HOST = typeof window !== 'undefined' && window.location.hostname 
+  ? window.location.hostname 
+  : (import.meta.env?.VITE_RELAY_HOST || '127.0.0.1')
+const RELAY_PORT = import.meta.env?.VITE_RELAY_PORT || '8080'
 const RELAY_PEER_ID = '12D3KooWAWN7MuqoNvFdoVKuSDG3HJvQA1txQzu5ujri49nhm2hn'
 const RELAY_ADDRESS = `/ip4/${RELAY_HOST}/tcp/${RELAY_PORT}/ws/p2p/${RELAY_PEER_ID}`
 

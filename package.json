@@ -6,6 +6,7 @@
   "scripts": {
     "start": "vite",
     "start:cloud": "vite --host 0.0.0.0",
+    "start:server": "node start-cloud.js",
     "build": "vite build",
     "relay": "node relay.js",
     "test": "npm run build && playwright test test",
