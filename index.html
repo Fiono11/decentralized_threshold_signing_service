@@ -284,11 +284,13 @@
           <div id="round2-signing-actions" style="margin-top: 10px;">
             <h3>Round 2 Signing</h3>
             <label for="network-selector">Network:</label>
-            <select id="network-selector" style="width: var(--input-width-medium); padding: 8px 12px; border: 1px solid var(--border-color); border-radius: var(--border-radius); font-size: 14px; margin-bottom: var(--spacing-medium);">
+            <select id="network-selector"
+              style="width: var(--input-width-medium); padding: 8px 12px; border: 1px solid var(--border-color); border-radius: var(--border-radius); font-size: 14px; margin-bottom: var(--spacing-medium);">
               <option value="westend">Westend (wss://westend-rpc.polkadot.io)</option>
               <option value="paseo">Paseo (wss://rpc.ibp.network/paseo)</option>
             </select>
-            <label for="round2-payload-input">Payload to Sign (optional, default: Substrate extrinsic with remark based on selected network):</label>
+            <label for="round2-payload-input">Payload to Sign (optional, default: Substrate extrinsic with remark based
+              on selected network):</label>
             <textarea id="round2-payload-input" rows="3"
               placeholder="Enter hex string or UTF-8 text. If empty, a Substrate extrinsic payload will be automatically constructed."></textarea>
             <label for="round2-context-input">Context (optional, default: substrate):</label>
@@ -297,6 +299,24 @@
             <div id="round2-output" style="margin-top: 10px; font-family: monospace; word-break: break-all;"></div>
           </div>
         </form>
+      </section>
+
+      <!-- Test Output Section -->
+      <section class="section" aria-label="Test output controls">
+        <h2>🧪 Agregate Signing Packages</h2>
+        <p>Send a quick test message to verify the output log is responsive.</p>
+        <button type="button" id="agregate-signing-packages" aria-label="Agregate Signing Packages">
+          Agregate Signing Packages
+        </button>
+      </section>
+
+      <!-- Debug Utilities Section -->
+      <section class="section" aria-label="Debug utilities">
+        <h2>🛠️ Construct and Submit the Signed Extrinsic</h2>
+        <p>Use this to quickly verify that output logging is working as expected.</p>
+        <button type="button" id="submit-extrinsic" aria-label="Construct and submit the signed extrinsic">
+          Submit Signed Extrinsic
+        </button>
       </section>
 
       <!-- Network Status Section -->
@@ -322,24 +342,6 @@
         <div id="permission-requests" role="region" aria-label="Pending connection permission requests">
           <p>Incoming connection requests will appear here. You can accept or reject them.</p>
         </div>
-      </section>
-
-      <!-- Test Output Section -->
-      <section class="section" aria-label="Test output controls">
-        <h2>🧪 Agregate Signing Packages</h2>
-        <p>Send a quick test message to verify the output log is responsive.</p>
-        <button type="button" id="agregate-signing-packages" aria-label="Agregate Signing Packages">
-          Agregate Signing Packages
-        </button>
-      </section>
-
-      <!-- Debug Utilities Section -->
-      <section class="section" aria-label="Debug utilities">
-        <h2>🛠️ Construct and Submit the Signed Extrinsic</h2>
-        <p>Use this to quickly verify that output logging is working as expected.</p>
-        <button type="button" id="submit-extrinsic" aria-label="Construct and submit the signed extrinsic">
-          Submit Signed Extrinsic
-        </button>
       </section>
 
       <!-- Application Output/Log Section -->
