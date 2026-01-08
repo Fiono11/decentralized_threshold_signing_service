@@ -12,6 +12,30 @@ if (typeof Promise.withResolvers !== 'function') {
   }
 }
 
+// Polyfill for CustomEvent (Node.js 19.7.0+ feature, needed for libp2p dependencies)
+if (typeof CustomEvent === 'undefined') {
+  global.CustomEvent = class CustomEvent {
+    constructor(type, options = {}) {
+      this.type = type
+      this.detail = options.detail || null
+      this.bubbles = options.bubbles || false
+      this.cancelable = options.cancelable || false
+      this.defaultPrevented = false
+      this.timeStamp = Date.now()
+    }
+
+    preventDefault() {
+      if (this.cancelable) {
+        this.defaultPrevented = true
+      }
+    }
+
+    stopPropagation() {
+      // No-op for Node.js environment
+    }
+  }
+}
+
 import { noise } from '@chainsafe/libp2p-noise'
 import { yamux } from '@chainsafe/libp2p-yamux'
 import { circuitRelayServer } from '@libp2p/circuit-relay-v2'
