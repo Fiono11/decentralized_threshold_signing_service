@@ -109,7 +109,7 @@ Two browsers will exchange messages and produce a valid threshold signature over
 ## Build and Testing
 
 ### Cloud Instance
-- Follow [Manual Testing Steps](#manual-testing-steps) without the need for a local setup
+- Follow [Manual Testing Steps](#manual-testing-steps) directly (no need for a local setup)
 
 ### Local (Without Docker)
 
