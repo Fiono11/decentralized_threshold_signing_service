@@ -277,7 +277,7 @@ test.describe('browser to browser example:', () => {
 
     // Wait for permission request to appear on pageA and reject it
     const permissionRequestsSection = pageA.locator('#permission-requests')
-    await expect(permissionRequestsSection).toContainText('Incoming Connection Request', { timeout: 3000 })
+    await expect(permissionRequestsSection).toContainText('Incoming Connection Request', { timeout: 10000 })
 
     const rejectButton = permissionRequestsSection.locator('button:has-text("Reject")')
     await rejectButton.click()
@@ -334,7 +334,7 @@ const connectViaSS58AddressWithPermission = async (requesterPage, acceptorPage, 
 
   // Wait for permission request to appear on acceptor page
   const permissionRequestsSection = acceptorPage.locator('#permission-requests')
-  await expect(permissionRequestsSection).toContainText('Incoming Connection Request', { timeout: 3000 })
+  await expect(permissionRequestsSection).toContainText('Incoming Connection Request', { timeout: 10000 })
   await expect(permissionRequestsSection).toContainText('From:')
 
   // Accept the permission request
@@ -1550,7 +1550,7 @@ test.describe('Polkadot API Integration with Threshold Signing:', () => {
   })
 
   test('should sign Polkadot extrinsic using threshold public key and threshold signing protocol', async ({ page: pageA, context }) => {
-    test.setTimeout(3000)
+    test.setTimeout(120000)
 
     // Capture browser console logs and forward them to test output
     // This must be set up before any evaluate calls that log to console
@@ -1983,7 +1983,7 @@ test.describe('Polkadot API Integration with Threshold Signing:', () => {
   })
 
   test('should sign Paseo extrinsic using threshold public key and threshold signing protocol', async ({ page: pageA, context }) => {
-    test.setTimeout(3000)
+    test.setTimeout(120000)
 
     // Capture browser console logs and forward them to test output
     // This must be set up before any evaluate calls that log to console

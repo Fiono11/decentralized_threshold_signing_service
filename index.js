@@ -1796,7 +1796,7 @@ const startPermissionRequestPolling = () => {
       // Silently handle errors to avoid spamming the console
       // The error might be due to no relay connection or no SS58 address
     }
-  }, 10000) // Check every 10 seconds
+  }, 2000)
 }
 
 // Clean up session resources
@@ -2022,48 +2022,58 @@ const storeAddressInRelay = async (polkadotAddress, webrtcMultiaddr, secretKey, 
     sessionState.mySecretKey = secretKey
     appendOutput('Address registered with proof of possession!')
     restorePersistedAllMessages(polkadotAddress)
+
+    // Trigger immediate check for pending permission requests
+    // This is important for tests where permission requests may have been sent before address was stored
+    try {
+      await checkForIncomingPermissionRequests(node, sessionState)
+    } catch (error) {
+      // Silently handle - might not have relay connection yet
+    }
   } catch (error) {
     throw new Error(`Proof of possession failed: ${error.message}`)
   }
 }
 
 // Store Address Button Handler
-window['store-address-input'].onclick = async () => {
-  const polkadotAddress = window['ss58-address-input'].value.toString().trim()
-  const secretKey = window['secret-key-input'].value.toString().trim()
+if (window['store-address-input']) {
+  window['store-address-input'].onclick = async () => {
+    const polkadotAddress = window['ss58-address-input'].value.toString().trim()
+    const secretKey = window['secret-key-input'].value.toString().trim()
 
-  if (!polkadotAddress) {
-    appendOutput('Please enter a SS58 address')
-    return
-  }
-
-  if (!secretKey) {
-    appendOutput('Please enter a secret key')
-    return
-  }
-
-  try {
-    appendOutput('Validating SS58 address...')
-    validatePolkadotAddress(polkadotAddress)
-    appendOutput(`Valid address: ${polkadotAddress}`)
-
-    appendOutput('Validating secret key...')
-    // Validate secret key format (should be 32 bytes = 64 hex chars + 0x prefix)
-    if (!secretKey.startsWith('0x') || secretKey.length !== 66) {
-      throw new Error('Secret key must be 32 bytes (64 hex characters) with 0x prefix')
-    }
-    appendOutput(`Valid secret key: ${secretKey.substring(0, 10)}...`)
-
-    const webrtcMultiaddr = getWebrtcMultiaddr(node)
-    if (!webrtcMultiaddr) {
-      const availableMultiaddrs = node.getMultiaddrs().map(ma => ma.toString()).join(', ')
-      appendOutput(`No WebRTC address found. Available: ${availableMultiaddrs}`)
+    if (!polkadotAddress) {
+      appendOutput('Please enter a SS58 address')
       return
     }
 
-    await storeAddressInRelay(polkadotAddress, webrtcMultiaddr, secretKey, node, sessionState)
-  } catch (error) {
-    appendOutput(`Error: ${error.message}`)
+    if (!secretKey) {
+      appendOutput('Please enter a secret key')
+      return
+    }
+
+    try {
+      appendOutput('Validating SS58 address...')
+      validatePolkadotAddress(polkadotAddress)
+      appendOutput(`Valid address: ${polkadotAddress}`)
+
+      appendOutput('Validating secret key...')
+      // Validate secret key format (should be 32 bytes = 64 hex chars + 0x prefix)
+      if (!secretKey.startsWith('0x') || secretKey.length !== 66) {
+        throw new Error('Secret key must be 32 bytes (64 hex characters) with 0x prefix')
+      }
+      appendOutput(`Valid secret key: ${secretKey.substring(0, 10)}...`)
+
+      const webrtcMultiaddr = getWebrtcMultiaddr(node)
+      if (!webrtcMultiaddr) {
+        const availableMultiaddrs = node.getMultiaddrs().map(ma => ma.toString()).join(', ')
+        appendOutput(`No WebRTC address found. Available: ${availableMultiaddrs}`)
+        return
+      }
+
+      await storeAddressInRelay(polkadotAddress, webrtcMultiaddr, secretKey, node, sessionState)
+    } catch (error) {
+      appendOutput(`Error: ${error.message}`)
+    }
   }
 }
 
@@ -2289,19 +2299,21 @@ const performConnectionProofOfPossession = async (peerMultiaddr, node, sessionSt
 }
 
 // Connect via Address Button Handler
-window['connect-via-address'].onclick = async () => {
-  const polkadotAddress = window['ss58-address'].value.toString().trim()
+if (window['connect-via-address']) {
+  window['connect-via-address'].onclick = async () => {
+    const polkadotAddress = window['ss58-address'].value.toString().trim()
 
-  if (!polkadotAddress) {
-    appendOutput('Please enter a SS58 address')
-    return
-  }
+    if (!polkadotAddress) {
+      appendOutput('Please enter a SS58 address')
+      return
+    }
 
-  try {
-    appendOutput(`Requesting connection to: ${polkadotAddress}`)
-    await connectToPeerWithPermission(polkadotAddress, node, sessionState)
-  } catch (error) {
-    appendOutput(`Error: ${error.message}`)
+    try {
+      appendOutput(`Requesting connection to: ${polkadotAddress}`)
+      await connectToPeerWithPermission(polkadotAddress, node, sessionState)
+    } catch (error) {
+      appendOutput(`Error: ${error.message}`)
+    }
   }
 }
 
@@ -2400,478 +2412,486 @@ window.restartSession = async () => {
   }
 }
 
-window['agregate-signing-packages'].onclick = () => {
-  try {
-    if (!round2SigningPackage) {
-      appendOutput('No signing package available. Please run Round 2 signing first.')
-      return
-    }
-
-    // Collect all signing packages
-    const allSigningPackages = [round2SigningPackage]
-    if (receivedSigningPackages.length > 0) {
-      allSigningPackages.push(...receivedSigningPackages)
-      appendOutput(`Aggregating ${allSigningPackages.length} signing packages...`)
-    } else {
-      appendOutput('Warning: No signing packages received from other participants.')
-      appendOutput('You need at least threshold signing packages to aggregate.')
-      return
-    }
-
-    appendOutput('Aggregating threshold signature...')
-    appendOutput(`Our signing package: ${round2SigningPackage.length} bytes`)
-    appendOutput(`Received signing packages: ${receivedSigningPackages.length}`)
-    receivedSigningPackages.forEach((pkg, idx) => {
-      appendOutput(`  Package ${idx + 1}: ${pkg.length} bytes`)
-    })
-
-    // Validate that we have enough signing packages
-    const thresholdInput = document.getElementById('threshold-input')
-    const threshold = thresholdInput ? parseInt(thresholdInput.value) : 2
-    if (allSigningPackages.length < threshold) {
-      appendOutput(`Error: Need at least ${threshold} signing packages for threshold ${threshold}, but only have ${allSigningPackages.length}`)
-      return
-    }
-
-    appendOutput(`Aggregating with ${allSigningPackages.length} packages (threshold: ${threshold})`)
-
-    // Prepare signing packages for WASM (JSON encode)
-    // The format should be an array of byte arrays: [[bytes...], [bytes...]]
+if (window['agregate-signing-packages']) {
+  window['agregate-signing-packages'].onclick = () => {
     try {
-      const aggregation = window.thresholdSigning.aggregateSignatures({
-        signingPackages: allSigningPackages
-      })
-
-      appendOutput(`JSON length: ${aggregation.signingPackagesJson.length} characters`)
-      appendOutput(`Bytes length: ${new TextEncoder().encode(aggregation.signingPackagesJson).length} bytes`)
-
-      appendOutput(`✓ Signature aggregation completed`)
-      appendOutput(`✓ Aggregated signature: ${aggregation.aggregatedSignatureArray.length} bytes`)
-      appendOutput(`✓ Signature (hex): ${aggregation.aggregatedSignatureHex}`)
-
-      const signingPackageOutput = document.getElementById('signing-package-output')
-      if (signingPackageOutput) {
-        signingPackageOutput.innerHTML = `
-          <p><strong>Aggregated Signature (${aggregation.aggregatedSignatureArray.length} bytes):</strong></p>
-          <p style="word-break: break-all;">${aggregation.aggregatedSignatureHex}</p>
-        `
-      }
-
-      window.aggregatedSignature = Array.from(aggregation.aggregatedSignature)
-      window.thresholdSigningState.lastAggregatedSignature = aggregation
-    } catch (wasmErr) {
-      // Handle WASM-specific errors
-      let errorMessage = 'Unknown error'
-      if (wasmErr && typeof wasmErr === 'object') {
-        if (wasmErr.message) {
-          errorMessage = wasmErr.message
-        } else if (wasmErr.toString && wasmErr.toString() !== '[object Object]') {
-          errorMessage = wasmErr.toString()
-        } else {
-          errorMessage = JSON.stringify(wasmErr)
-        }
-      } else if (wasmErr) {
-        errorMessage = String(wasmErr)
-      }
-
-      appendOutput(`Error in WASM aggregation: ${errorMessage}`)
-      console.error('WASM aggregation error details:', wasmErr)
-      console.error('Signing packages being sent:', allSigningPackages.map(p => p.length))
-      throw wasmErr
-    }
-
-  } catch (err) {
-    const errorMessage = err?.message || err?.toString() || String(err) || 'Unknown error'
-    appendOutput(`Error aggregating signatures: ${errorMessage}`)
-    console.error('Aggregate signatures error:', err)
-    console.error('Error stack:', err?.stack)
-  }
-}
-
-window['submit-extrinsic'].onclick = async () => {
-  try {
-    appendOutput('Preparing to submit threshold extrinsic...')
-
-    const state = window.thresholdSigningState || {}
-    let aggregatedSignatureBytes = null
-
-    if (state.lastAggregatedSignature?.aggregatedSignature instanceof Uint8Array) {
-      aggregatedSignatureBytes = new Uint8Array(state.lastAggregatedSignature.aggregatedSignature)
-    } else if (Array.isArray(window.aggregatedSignature)) {
-      aggregatedSignatureBytes = Uint8Array.from(window.aggregatedSignature)
-    }
-
-    if (!aggregatedSignatureBytes || aggregatedSignatureBytes.length === 0) {
-      appendOutput('No aggregated signature found. Please aggregate signing packages first.')
-      return
-    }
-
-    if (aggregatedSignatureBytes.length !== 64) {
-      appendOutput(`Aggregated signature must be 64 bytes for Sr25519. Current length: ${aggregatedSignatureBytes.length} bytes.`)
-      return
-    }
-
-    const signableDetails = state.lastSignablePayload
-    if (!signableDetails) {
-      appendOutput('Missing signable payload details. Please run Round 2 signing before submitting.')
-      return
-    }
-
-    let signablePayloadBytes = signableDetails.signableU8a instanceof Uint8Array
-      ? signableDetails.signableU8a
-      : null
-
-    if (!signablePayloadBytes && signableDetails.signableHex) {
-      signablePayloadBytes = hexToU8a(signableDetails.signableHex)
-    }
-
-    if (!signablePayloadBytes) {
-      appendOutput('Unable to determine signable payload bytes. Re-run Round 2 signing.')
-      return
-    }
-
-    const determineThresholdPublicKey = () => {
-      if (state.lastProcessedThreshold?.thresholdPublicKey) {
-        return new Uint8Array(state.lastProcessedThreshold.thresholdPublicKey)
-      }
-      if (window.generatedThresholdKey) {
-        return window.generatedThresholdKey instanceof Uint8Array
-          ? new Uint8Array(window.generatedThresholdKey)
-          : Uint8Array.from(window.generatedThresholdKey)
-      }
-      if (window.cachedThresholdSigning?.thresholdPublicKey) {
-        return window.cachedThresholdSigning.thresholdPublicKey instanceof Uint8Array
-          ? new Uint8Array(window.cachedThresholdSigning.thresholdPublicKey)
-          : new Uint8Array(window.cachedThresholdSigning.thresholdPublicKey)
-      }
-      return null
-    }
-
-    const thresholdPublicKey = determineThresholdPublicKey()
-
-    if (!thresholdPublicKey) {
-      appendOutput('Threshold public key is unavailable. Please process AllMessages or load cached artifacts.')
-      return
-    }
-
-    // Use network from signableDetails if available, otherwise use selected network
-    // Determine network from signableDetails or use current selection
-    let selectedNetwork = 'westend'
-    if (signableDetails.wsEndpoint) {
-      // Try to determine network from endpoint
-      if (signableDetails.wsEndpoint.includes('paseo')) {
-        selectedNetwork = 'paseo'
-      } else if (signableDetails.wsEndpoint.includes('westend')) {
-        selectedNetwork = 'westend'
-      }
-    } else {
-      selectedNetwork = getSelectedNetwork()
-    }
-    const networkConfig = getNetworkConfig(selectedNetwork)
-    const wsEndpoint = signableDetails.wsEndpoint || networkConfig.wsEndpoint
-    const remarkHex = signableDetails.remarkHex ||
-      (() => {
-        const encoder = new TextEncoder()
-        const remarkText = signableDetails.remarkText || networkConfig.remarkText
-        return toHexString(encoder.encode(remarkText), { withPrefix: true })
-      })()
-
-    const context = signableDetails.signingContext || EXTRINSIC_TEST_CONFIG.signingContext || ''
-    const payloadHexPreview = signableDetails.signableHex?.substring(0, 100) ?? '(unavailable)'
-
-    appendOutput(`Using network: ${networkConfig.name}`)
-    appendOutput(`Using WS endpoint: ${wsEndpoint}`)
-    appendOutput(`Signable payload hex (preview): ${payloadHexPreview}...`)
-
-    const provider = new WsProvider(wsEndpoint)
-    let api
-
-    try {
-      api = await ApiPromise.create({ provider })
-      await api.isReady
-
-      const chainName = api.runtimeChain.toString()
-      appendOutput(`Connected to chain: ${chainName}`)
-      appendOutput(`Runtime specVersion: ${api.runtimeVersion.specVersion.toString()} | transactionVersion: ${api.runtimeVersion.transactionVersion.toString()}`)
-
-      if (typeof signableDetails.specVersion === 'number' && signableDetails.specVersion !== api.runtimeVersion.specVersion.toNumber()) {
-        appendOutput(`⚠️  Warning: Current specVersion (${api.runtimeVersion.specVersion.toString()}) differs from the one used during signing (${signableDetails.specVersion}).`)
-      }
-
-      const remark = api.tx.system.remark(remarkHex)
-      const accountId32 = api.registry.createType('AccountId32', thresholdPublicKey)
-      const accountIdHex = accountId32.toHex()
-      const accountIdSS58 = signableDetails.accountId32SS58 || accountId32.toHuman()
-
-      appendOutput(`Threshold account (hex): ${accountIdHex}`)
-      appendOutput(`Threshold account (SS58): ${accountIdSS58}`)
-
-      let signatureVerified = false
-      try {
-        if (context) {
-          const encoder = new TextEncoder()
-          const contextBytes = encoder.encode(context)
-          const combined = new Uint8Array(contextBytes.length + signablePayloadBytes.length)
-          combined.set(contextBytes, 0)
-          combined.set(signablePayloadBytes, contextBytes.length)
-          signatureVerified = sr25519Verify(combined, aggregatedSignatureBytes, thresholdPublicKey)
-        } else {
-          signatureVerified = sr25519Verify(signablePayloadBytes, aggregatedSignatureBytes, thresholdPublicKey)
-        }
-      } catch (verifyError) {
-        appendOutput(`⚠️  Failed to verify signature locally: ${verifyError.message}`)
-      }
-
-      appendOutput(`Signature verification result: ${signatureVerified ? 'valid' : 'invalid or unchecked'}`)
-
-      const eraValue = signableDetails.payloadFields?.era ?? signableDetails.eraHex ?? '0x00'
-      const nonceValue = signableDetails.payloadFields?.nonce ?? signableDetails.nonce ?? '0'
-      const tipValue = signableDetails.payloadFields?.tip ?? '0'
-
-      const era = api.registry.createType('ExtrinsicEra', eraValue)
-      const nonce = api.registry.createType('Index', nonceValue)
-
-      const signatureType = api.registry.createType('MultiSignature', {
-        Sr25519: aggregatedSignatureBytes
-      })
-
-      const signedExtrinsic = remark.addSignature(
-        accountId32,
-        signatureType,
-        {
-          era,
-          nonce,
-          tip: tipValue
-        }
-      )
-
-      const signedHex = signedExtrinsic.toHex()
-      appendOutput(`Signed extrinsic length: ${signedHex.length} characters`)
-      appendOutput(`Signed extrinsic (preview): ${signedHex.substring(0, 200)}...`)
-
-      let balanceInfo = null
-      let paymentInfo = null
-
-      try {
-        balanceInfo = await api.query.system.account(accountId32)
-        paymentInfo = await signedExtrinsic.paymentInfo(accountId32)
-      } catch (queryError) {
-        appendOutput(`⚠️  Unable to fetch balance or payment info: ${queryError.message}`)
-      }
-
-      let sufficientBalance = true
-      if (balanceInfo && paymentInfo) {
-        const free = balanceInfo.data.free.toBigInt()
-        const fee = paymentInfo.partialFee.toBigInt()
-        const buffer = 10_000_000_000n // 0.00001 buffer (works for both Westend and Paseo)
-        const required = fee + buffer
-        const formatToken = (value) => Number(value) / 1e12
-        const tokenSymbol = selectedNetwork === 'paseo' ? 'PAS' : 'WND'
-
-        appendOutput(`Account balance: ${free.toString()} Planck (${formatToken(free).toFixed(6)} ${tokenSymbol})`)
-        appendOutput(`Estimated fee: ${fee.toString()} Planck (${formatToken(fee).toFixed(6)} ${tokenSymbol})`)
-        appendOutput(`Required balance (fee + buffer): ${required.toString()} Planck (${formatToken(required).toFixed(6)} ${tokenSymbol})`)
-
-        if (free < required) {
-          sufficientBalance = false
-          appendOutput('⚠️  Insufficient balance to cover fee. Skipping submission. Fund the threshold account and try again.')
-        }
-      } else {
-        appendOutput('⚠️  Proceeding without balance check (data unavailable).')
-      }
-
-      if (!sufficientBalance) {
+      if (!round2SigningPackage) {
+        appendOutput('No signing package available. Please run Round 2 signing first.')
         return
       }
 
-      try {
-        appendOutput('Submitting extrinsic...')
-        const txHash = await api.rpc.author.submitExtrinsic(signedHex)
-        appendOutput(`✓ Extrinsic submitted successfully. TxHash: ${txHash.toHex()}`)
-      } catch (submissionError) {
-        appendOutput(`⚠️  Extrinsic submission failed: ${submissionError.message}`)
-      }
-    } finally {
-      if (api) {
-        await api.disconnect()
+      // Collect all signing packages
+      const allSigningPackages = [round2SigningPackage]
+      if (receivedSigningPackages.length > 0) {
+        allSigningPackages.push(...receivedSigningPackages)
+        appendOutput(`Aggregating ${allSigningPackages.length} signing packages...`)
       } else {
-        await provider.disconnect?.()
+        appendOutput('Warning: No signing packages received from other participants.')
+        appendOutput('You need at least threshold signing packages to aggregate.')
+        return
       }
+
+      appendOutput('Aggregating threshold signature...')
+      appendOutput(`Our signing package: ${round2SigningPackage.length} bytes`)
+      appendOutput(`Received signing packages: ${receivedSigningPackages.length}`)
+      receivedSigningPackages.forEach((pkg, idx) => {
+        appendOutput(`  Package ${idx + 1}: ${pkg.length} bytes`)
+      })
+
+      // Validate that we have enough signing packages
+      const thresholdInput = document.getElementById('threshold-input')
+      const threshold = thresholdInput ? parseInt(thresholdInput.value) : 2
+      if (allSigningPackages.length < threshold) {
+        appendOutput(`Error: Need at least ${threshold} signing packages for threshold ${threshold}, but only have ${allSigningPackages.length}`)
+        return
+      }
+
+      appendOutput(`Aggregating with ${allSigningPackages.length} packages (threshold: ${threshold})`)
+
+      // Prepare signing packages for WASM (JSON encode)
+      // The format should be an array of byte arrays: [[bytes...], [bytes...]]
+      try {
+        const aggregation = window.thresholdSigning.aggregateSignatures({
+          signingPackages: allSigningPackages
+        })
+
+        appendOutput(`JSON length: ${aggregation.signingPackagesJson.length} characters`)
+        appendOutput(`Bytes length: ${new TextEncoder().encode(aggregation.signingPackagesJson).length} bytes`)
+
+        appendOutput(`✓ Signature aggregation completed`)
+        appendOutput(`✓ Aggregated signature: ${aggregation.aggregatedSignatureArray.length} bytes`)
+        appendOutput(`✓ Signature (hex): ${aggregation.aggregatedSignatureHex}`)
+
+        const signingPackageOutput = document.getElementById('signing-package-output')
+        if (signingPackageOutput) {
+          signingPackageOutput.innerHTML = `
+          <p><strong>Aggregated Signature (${aggregation.aggregatedSignatureArray.length} bytes):</strong></p>
+          <p style="word-break: break-all;">${aggregation.aggregatedSignatureHex}</p>
+        `
+        }
+
+        window.aggregatedSignature = Array.from(aggregation.aggregatedSignature)
+        window.thresholdSigningState.lastAggregatedSignature = aggregation
+      } catch (wasmErr) {
+        // Handle WASM-specific errors
+        let errorMessage = 'Unknown error'
+        if (wasmErr && typeof wasmErr === 'object') {
+          if (wasmErr.message) {
+            errorMessage = wasmErr.message
+          } else if (wasmErr.toString && wasmErr.toString() !== '[object Object]') {
+            errorMessage = wasmErr.toString()
+          } else {
+            errorMessage = JSON.stringify(wasmErr)
+          }
+        } else if (wasmErr) {
+          errorMessage = String(wasmErr)
+        }
+
+        appendOutput(`Error in WASM aggregation: ${errorMessage}`)
+        console.error('WASM aggregation error details:', wasmErr)
+        console.error('Signing packages being sent:', allSigningPackages.map(p => p.length))
+        throw wasmErr
+      }
+
+    } catch (err) {
+      const errorMessage = err?.message || err?.toString() || String(err) || 'Unknown error'
+      appendOutput(`Error aggregating signatures: ${errorMessage}`)
+      console.error('Aggregate signatures error:', err)
+      console.error('Error stack:', err?.stack)
     }
-  } catch (err) {
-    appendOutput(`Error submitting extrinsic: ${err.message}`)
-    console.error('submit-extrinsic error:', err)
+  }
+}
+
+if (window['submit-extrinsic']) {
+  window['submit-extrinsic'].onclick = async () => {
+    try {
+      appendOutput('Preparing to submit threshold extrinsic...')
+
+      const state = window.thresholdSigningState || {}
+      let aggregatedSignatureBytes = null
+
+      if (state.lastAggregatedSignature?.aggregatedSignature instanceof Uint8Array) {
+        aggregatedSignatureBytes = new Uint8Array(state.lastAggregatedSignature.aggregatedSignature)
+      } else if (Array.isArray(window.aggregatedSignature)) {
+        aggregatedSignatureBytes = Uint8Array.from(window.aggregatedSignature)
+      }
+
+      if (!aggregatedSignatureBytes || aggregatedSignatureBytes.length === 0) {
+        appendOutput('No aggregated signature found. Please aggregate signing packages first.')
+        return
+      }
+
+      if (aggregatedSignatureBytes.length !== 64) {
+        appendOutput(`Aggregated signature must be 64 bytes for Sr25519. Current length: ${aggregatedSignatureBytes.length} bytes.`)
+        return
+      }
+
+      const signableDetails = state.lastSignablePayload
+      if (!signableDetails) {
+        appendOutput('Missing signable payload details. Please run Round 2 signing before submitting.')
+        return
+      }
+
+      let signablePayloadBytes = signableDetails.signableU8a instanceof Uint8Array
+        ? signableDetails.signableU8a
+        : null
+
+      if (!signablePayloadBytes && signableDetails.signableHex) {
+        signablePayloadBytes = hexToU8a(signableDetails.signableHex)
+      }
+
+      if (!signablePayloadBytes) {
+        appendOutput('Unable to determine signable payload bytes. Re-run Round 2 signing.')
+        return
+      }
+
+      const determineThresholdPublicKey = () => {
+        if (state.lastProcessedThreshold?.thresholdPublicKey) {
+          return new Uint8Array(state.lastProcessedThreshold.thresholdPublicKey)
+        }
+        if (window.generatedThresholdKey) {
+          return window.generatedThresholdKey instanceof Uint8Array
+            ? new Uint8Array(window.generatedThresholdKey)
+            : Uint8Array.from(window.generatedThresholdKey)
+        }
+        if (window.cachedThresholdSigning?.thresholdPublicKey) {
+          return window.cachedThresholdSigning.thresholdPublicKey instanceof Uint8Array
+            ? new Uint8Array(window.cachedThresholdSigning.thresholdPublicKey)
+            : new Uint8Array(window.cachedThresholdSigning.thresholdPublicKey)
+        }
+        return null
+      }
+
+      const thresholdPublicKey = determineThresholdPublicKey()
+
+      if (!thresholdPublicKey) {
+        appendOutput('Threshold public key is unavailable. Please process AllMessages or load cached artifacts.')
+        return
+      }
+
+      // Use network from signableDetails if available, otherwise use selected network
+      // Determine network from signableDetails or use current selection
+      let selectedNetwork = 'westend'
+      if (signableDetails.wsEndpoint) {
+        // Try to determine network from endpoint
+        if (signableDetails.wsEndpoint.includes('paseo')) {
+          selectedNetwork = 'paseo'
+        } else if (signableDetails.wsEndpoint.includes('westend')) {
+          selectedNetwork = 'westend'
+        }
+      } else {
+        selectedNetwork = getSelectedNetwork()
+      }
+      const networkConfig = getNetworkConfig(selectedNetwork)
+      const wsEndpoint = signableDetails.wsEndpoint || networkConfig.wsEndpoint
+      const remarkHex = signableDetails.remarkHex ||
+        (() => {
+          const encoder = new TextEncoder()
+          const remarkText = signableDetails.remarkText || networkConfig.remarkText
+          return toHexString(encoder.encode(remarkText), { withPrefix: true })
+        })()
+
+      const context = signableDetails.signingContext || EXTRINSIC_TEST_CONFIG.signingContext || ''
+      const payloadHexPreview = signableDetails.signableHex?.substring(0, 100) ?? '(unavailable)'
+
+      appendOutput(`Using network: ${networkConfig.name}`)
+      appendOutput(`Using WS endpoint: ${wsEndpoint}`)
+      appendOutput(`Signable payload hex (preview): ${payloadHexPreview}...`)
+
+      const provider = new WsProvider(wsEndpoint)
+      let api
+
+      try {
+        api = await ApiPromise.create({ provider })
+        await api.isReady
+
+        const chainName = api.runtimeChain.toString()
+        appendOutput(`Connected to chain: ${chainName}`)
+        appendOutput(`Runtime specVersion: ${api.runtimeVersion.specVersion.toString()} | transactionVersion: ${api.runtimeVersion.transactionVersion.toString()}`)
+
+        if (typeof signableDetails.specVersion === 'number' && signableDetails.specVersion !== api.runtimeVersion.specVersion.toNumber()) {
+          appendOutput(`⚠️  Warning: Current specVersion (${api.runtimeVersion.specVersion.toString()}) differs from the one used during signing (${signableDetails.specVersion}).`)
+        }
+
+        const remark = api.tx.system.remark(remarkHex)
+        const accountId32 = api.registry.createType('AccountId32', thresholdPublicKey)
+        const accountIdHex = accountId32.toHex()
+        const accountIdSS58 = signableDetails.accountId32SS58 || accountId32.toHuman()
+
+        appendOutput(`Threshold account (hex): ${accountIdHex}`)
+        appendOutput(`Threshold account (SS58): ${accountIdSS58}`)
+
+        let signatureVerified = false
+        try {
+          if (context) {
+            const encoder = new TextEncoder()
+            const contextBytes = encoder.encode(context)
+            const combined = new Uint8Array(contextBytes.length + signablePayloadBytes.length)
+            combined.set(contextBytes, 0)
+            combined.set(signablePayloadBytes, contextBytes.length)
+            signatureVerified = sr25519Verify(combined, aggregatedSignatureBytes, thresholdPublicKey)
+          } else {
+            signatureVerified = sr25519Verify(signablePayloadBytes, aggregatedSignatureBytes, thresholdPublicKey)
+          }
+        } catch (verifyError) {
+          appendOutput(`⚠️  Failed to verify signature locally: ${verifyError.message}`)
+        }
+
+        appendOutput(`Signature verification result: ${signatureVerified ? 'valid' : 'invalid or unchecked'}`)
+
+        const eraValue = signableDetails.payloadFields?.era ?? signableDetails.eraHex ?? '0x00'
+        const nonceValue = signableDetails.payloadFields?.nonce ?? signableDetails.nonce ?? '0'
+        const tipValue = signableDetails.payloadFields?.tip ?? '0'
+
+        const era = api.registry.createType('ExtrinsicEra', eraValue)
+        const nonce = api.registry.createType('Index', nonceValue)
+
+        const signatureType = api.registry.createType('MultiSignature', {
+          Sr25519: aggregatedSignatureBytes
+        })
+
+        const signedExtrinsic = remark.addSignature(
+          accountId32,
+          signatureType,
+          {
+            era,
+            nonce,
+            tip: tipValue
+          }
+        )
+
+        const signedHex = signedExtrinsic.toHex()
+        appendOutput(`Signed extrinsic length: ${signedHex.length} characters`)
+        appendOutput(`Signed extrinsic (preview): ${signedHex.substring(0, 200)}...`)
+
+        let balanceInfo = null
+        let paymentInfo = null
+
+        try {
+          balanceInfo = await api.query.system.account(accountId32)
+          paymentInfo = await signedExtrinsic.paymentInfo(accountId32)
+        } catch (queryError) {
+          appendOutput(`⚠️  Unable to fetch balance or payment info: ${queryError.message}`)
+        }
+
+        let sufficientBalance = true
+        if (balanceInfo && paymentInfo) {
+          const free = balanceInfo.data.free.toBigInt()
+          const fee = paymentInfo.partialFee.toBigInt()
+          const buffer = 10_000_000_000n // 0.00001 buffer (works for both Westend and Paseo)
+          const required = fee + buffer
+          const formatToken = (value) => Number(value) / 1e12
+          const tokenSymbol = selectedNetwork === 'paseo' ? 'PAS' : 'WND'
+
+          appendOutput(`Account balance: ${free.toString()} Planck (${formatToken(free).toFixed(6)} ${tokenSymbol})`)
+          appendOutput(`Estimated fee: ${fee.toString()} Planck (${formatToken(fee).toFixed(6)} ${tokenSymbol})`)
+          appendOutput(`Required balance (fee + buffer): ${required.toString()} Planck (${formatToken(required).toFixed(6)} ${tokenSymbol})`)
+
+          if (free < required) {
+            sufficientBalance = false
+            appendOutput('⚠️  Insufficient balance to cover fee. Skipping submission. Fund the threshold account and try again.')
+          }
+        } else {
+          appendOutput('⚠️  Proceeding without balance check (data unavailable).')
+        }
+
+        if (!sufficientBalance) {
+          return
+        }
+
+        try {
+          appendOutput('Submitting extrinsic...')
+          const txHash = await api.rpc.author.submitExtrinsic(signedHex)
+          appendOutput(`✓ Extrinsic submitted successfully. TxHash: ${txHash.toHex()}`)
+        } catch (submissionError) {
+          appendOutput(`⚠️  Extrinsic submission failed: ${submissionError.message}`)
+        }
+      } finally {
+        if (api) {
+          await api.disconnect()
+        } else {
+          await provider.disconnect?.()
+        }
+      }
+    } catch (err) {
+      appendOutput(`Error submitting extrinsic: ${err.message}`)
+      console.error('submit-extrinsic error:', err)
+    }
   }
 }
 
 // Round 1 Generation: Generate AllMessage and send it to connected peers
-window['run-round1-generation'].onclick = async () => {
-  try {
-    const secretKeyInput = document.getElementById('threshold-secret-key-input').value.toString().trim()
-    const recipientsInput = window['recipients-input'].value.toString().trim()
-    const thresholdInput = window['threshold-input'].value.toString().trim()
-
-    // Validate inputs
-    if (!secretKeyInput) {
-      appendOutput('Please enter a secret key')
-      return
-    }
-
-    if (!recipientsInput) {
-      appendOutput('Please enter recipient addresses')
-      return
-    }
-
-    if (!thresholdInput || isNaN(parseInt(thresholdInput)) || parseInt(thresholdInput) < 1) {
-      appendOutput('Please enter a valid threshold (must be >= 1)')
-      return
-    }
-
-    const threshold = parseInt(thresholdInput)
-    const recipients = recipientsInput.split(',').map(addr => addr.trim()).filter(addr => addr.length > 0)
-
-    if (recipients.length === 0) {
-      appendOutput('Please enter at least one recipient address')
-      return
-    }
-
-    appendOutput('Round 1 Generation: Generating AllMessage...')
-    appendOutput(`Secret key: ${secretKeyInput}`)
-    appendOutput(`Recipients: ${recipients.join(', ')}`)
-    appendOutput(`Threshold: ${threshold}`)
-
-    const outputDiv = document.getElementById('round1-generation-output')
-    outputDiv.textContent = 'Generating AllMessage...'
-
+if (window['run-round1-generation']) {
+  window['run-round1-generation'].onclick = async () => {
     try {
-      const generation = window.thresholdSigning.generateAllMessage({
-        secretKey: secretKeyInput,
-        recipients,
-        threshold
-      })
+      const secretKeyInput = document.getElementById('threshold-secret-key-input').value.toString().trim()
+      const recipientsInput = window['recipients-input'].value.toString().trim()
+      const thresholdInput = window['threshold-input'].value.toString().trim()
 
-      generatedAllMessage = generation.allMessage
-      window.thresholdSigningState.lastGeneratedAllMessage = generation
-
-      appendOutput(`Generated keypair: ${generation.keypairBytes.length} bytes`)
-      appendOutput(`Concatenated recipients: ${generation.recipientsConcat.length} bytes`)
-      appendOutput(`✓ AllMessage generated successfully: ${generation.allMessage.length} bytes`)
-      appendOutput(`First 16 bytes: ${Array.from(generation.allMessage.slice(0, 16)).map(b => b.toString(16).padStart(2, '0')).join(' ')}`)
-
-      outputDiv.textContent = `AllMessage (${generation.allMessage.length} bytes): ${generation.allMessageHex}`
-
-      appendOutput('AllMessage ready for sending')
-      persistGeneratedAllMessage(generation)
-
-      // Now send the AllMessage to connected peer
-      if (!sessionState.peerMultiaddr) {
-        appendOutput('⚠ No peer connected. AllMessage generated but not sent. Please connect to a peer first.')
-        outputDiv.textContent += '\n⚠ No peer connected. Please connect to a peer to send AllMessage.'
+      // Validate inputs
+      if (!secretKeyInput) {
+        appendOutput('Please enter a secret key')
         return
       }
 
-      appendOutput('Sending AllMessage to connected peer...')
-      appendOutput(`AllMessage size: ${generatedAllMessage.length} bytes`)
-
-      // Convert AllMessage to hex string
-      const allMessageHex = Array.from(generatedAllMessage).map(b => b.toString(16).padStart(2, '0')).join('')
-      const messageToSend = `ALL_MESSAGE:${allMessageHex}`
-
-      appendOutput(`Sending: ${messageToSend.substring(0, 50)}...`)
-
-      // Ensure we have a chat stream
-      const streamReady = await handleChatStream()
-      if (!streamReady) {
-        outputDiv.textContent += '\n⚠ Failed to establish chat stream.'
+      if (!recipientsInput) {
+        appendOutput('Please enter recipient addresses')
         return
       }
 
-      // Send the AllMessage
-      await sendMessage(messageToSend)
-      appendOutput('✓ AllMessage sent successfully to connected peer')
-      outputDiv.textContent += '\n✓ AllMessage sent successfully to connected peer'
-
-      // Show Round 2 actions
-      const round2Actions = document.getElementById('round2-generation-actions')
-      if (round2Actions) {
-        round2Actions.style.display = 'block'
+      if (!thresholdInput || isNaN(parseInt(thresholdInput)) || parseInt(thresholdInput) < 1) {
+        appendOutput('Please enter a valid threshold (must be >= 1)')
+        return
       }
+
+      const threshold = parseInt(thresholdInput)
+      const recipients = recipientsInput.split(',').map(addr => addr.trim()).filter(addr => addr.length > 0)
+
+      if (recipients.length === 0) {
+        appendOutput('Please enter at least one recipient address')
+        return
+      }
+
+      appendOutput('Round 1 Generation: Generating AllMessage...')
+      appendOutput(`Secret key: ${secretKeyInput}`)
+      appendOutput(`Recipients: ${recipients.join(', ')}`)
+      appendOutput(`Threshold: ${threshold}`)
+
+      const outputDiv = document.getElementById('round1-generation-output')
+      outputDiv.textContent = 'Generating AllMessage...'
+
+      try {
+        const generation = window.thresholdSigning.generateAllMessage({
+          secretKey: secretKeyInput,
+          recipients,
+          threshold
+        })
+
+        generatedAllMessage = generation.allMessage
+        window.thresholdSigningState.lastGeneratedAllMessage = generation
+
+        appendOutput(`Generated keypair: ${generation.keypairBytes.length} bytes`)
+        appendOutput(`Concatenated recipients: ${generation.recipientsConcat.length} bytes`)
+        appendOutput(`✓ AllMessage generated successfully: ${generation.allMessage.length} bytes`)
+        appendOutput(`First 16 bytes: ${Array.from(generation.allMessage.slice(0, 16)).map(b => b.toString(16).padStart(2, '0')).join(' ')}`)
+
+        outputDiv.textContent = `AllMessage (${generation.allMessage.length} bytes): ${generation.allMessageHex}`
+
+        appendOutput('AllMessage ready for sending')
+        persistGeneratedAllMessage(generation)
+
+        // Now send the AllMessage to connected peer
+        if (!sessionState.peerMultiaddr) {
+          appendOutput('⚠ No peer connected. AllMessage generated but not sent. Please connect to a peer first.')
+          outputDiv.textContent += '\n⚠ No peer connected. Please connect to a peer to send AllMessage.'
+          return
+        }
+
+        appendOutput('Sending AllMessage to connected peer...')
+        appendOutput(`AllMessage size: ${generatedAllMessage.length} bytes`)
+
+        // Convert AllMessage to hex string
+        const allMessageHex = Array.from(generatedAllMessage).map(b => b.toString(16).padStart(2, '0')).join('')
+        const messageToSend = `ALL_MESSAGE:${allMessageHex}`
+
+        appendOutput(`Sending: ${messageToSend.substring(0, 50)}...`)
+
+        // Ensure we have a chat stream
+        const streamReady = await handleChatStream()
+        if (!streamReady) {
+          outputDiv.textContent += '\n⚠ Failed to establish chat stream.'
+          return
+        }
+
+        // Send the AllMessage
+        await sendMessage(messageToSend)
+        appendOutput('✓ AllMessage sent successfully to connected peer')
+        outputDiv.textContent += '\n✓ AllMessage sent successfully to connected peer'
+
+        // Show Round 2 actions
+        const round2Actions = document.getElementById('round2-generation-actions')
+        if (round2Actions) {
+          round2Actions.style.display = 'block'
+        }
+      } catch (err) {
+        appendOutput(`Error generating AllMessage: ${err.message}`)
+        outputDiv.textContent = `Error: ${err.message}`
+        console.error('Round 1 Generation error:', err)
+      }
+
     } catch (err) {
-      appendOutput(`Error generating AllMessage: ${err.message}`)
-      outputDiv.textContent = `Error: ${err.message}`
+      appendOutput(`Error in Round 1 Generation: ${err.message}`)
       console.error('Round 1 Generation error:', err)
     }
-
-  } catch (err) {
-    appendOutput(`Error in Round 1 Generation: ${err.message}`)
-    console.error('Round 1 Generation error:', err)
   }
 }
 
 // Round 2 Generation: Process AllMessages to generate threshold key
-window['run-round2-generation'].onclick = async () => {
-  try {
-    // Check if we have a generated AllMessage
-    if (!generatedAllMessage) {
-      appendOutput('No generated AllMessage found. Please run Round 1 Generation first.')
-      return
-    }
-
-    // Check if we have a received AllMessage
-    if (!receivedAllMessage) {
-      appendOutput('No received AllMessage found. Please receive an AllMessage from another peer first.')
-      return
-    }
-
-    // Get the current secret key for keypair generation
-    const secretKeyInput = document.getElementById('threshold-secret-key-input').value.toString().trim()
-    if (!secretKeyInput) {
-      appendOutput('No secret key found. Please enter your secret key.')
-      return
-    }
-
-    appendOutput('Round 2 Generation: Processing AllMessages to generate threshold key...')
-    appendOutput(`Generated AllMessage: ${generatedAllMessage.length} bytes`)
-    appendOutput(`Received AllMessage: ${receivedAllMessage.length} bytes`)
-
-    const outputDiv = document.getElementById('round2-generation-output')
-    outputDiv.textContent = 'Processing AllMessages...'
-
+if (window['run-round2-generation']) {
+  window['run-round2-generation'].onclick = async () => {
     try {
-      const processing = window.thresholdSigning.processAllMessages({
-        secretKey: secretKeyInput,
-        allMessages: [generatedAllMessage, receivedAllMessage]
-      })
-
-      appendOutput('Calling wasm_simplpedpop_recipient_all...')
-      appendOutput(`✓ Threshold key generated successfully: ${processing.thresholdPublicKey.length} bytes`)
-      appendOutput(`✓ SPP Output Message: ${processing.sppOutputMessage.length} bytes`)
-      appendOutput(`SPP Output Message (hex): ${processing.sppOutputMessageHex}`)
-      appendOutput(`✓ Signing Keypair: ${processing.signingKeypair.length} bytes`)
-      appendOutput(`First 16 bytes: ${processing.thresholdPublicKeyArray.slice(0, 16).map(b => b.toString(16).padStart(2, '0')).join(' ')}`)
-      appendOutput(`Threshold Public Key (hex): ${processing.thresholdPublicKeyHex}`)
-
-      outputDiv.textContent = `✓ Threshold key generated successfully!\nThreshold Public Key: ${processing.thresholdPublicKeyHex}\nSPP Output Message: ${processing.sppOutputMessageHex}`
-
-      const normalizedProcessing = setThresholdProcessingState(processing) || processing
-      appendOutput('✓ Threshold key processing completed successfully!')
-      appendOutput('The threshold public key, SPP output message, and signing keypair are now available for use in threshold signing operations.')
-      persistThresholdArtifacts(normalizedProcessing)
-
-      const round1Actions = document.getElementById('round1-signing-actions')
-      if (round1Actions) {
-        round1Actions.style.display = 'block'
+      // Check if we have a generated AllMessage
+      if (!generatedAllMessage) {
+        appendOutput('No generated AllMessage found. Please run Round 1 Generation first.')
+        return
       }
-    } catch (err) {
-      appendOutput(`Error processing AllMessages: ${err.message}`)
-      outputDiv.textContent = `Error: ${err.message}`
-      console.error('Round 2 Generation error:', err)
-      return
-    }
 
-  } catch (err) {
-    appendOutput(`Error in Round 2 Generation: ${err.message}`)
-    console.error('Round 2 Generation error:', err)
+      // Check if we have a received AllMessage
+      if (!receivedAllMessage) {
+        appendOutput('No received AllMessage found. Please receive an AllMessage from another peer first.')
+        return
+      }
+
+      // Get the current secret key for keypair generation
+      const secretKeyInput = document.getElementById('threshold-secret-key-input').value.toString().trim()
+      if (!secretKeyInput) {
+        appendOutput('No secret key found. Please enter your secret key.')
+        return
+      }
+
+      appendOutput('Round 2 Generation: Processing AllMessages to generate threshold key...')
+      appendOutput(`Generated AllMessage: ${generatedAllMessage.length} bytes`)
+      appendOutput(`Received AllMessage: ${receivedAllMessage.length} bytes`)
+
+      const outputDiv = document.getElementById('round2-generation-output')
+      outputDiv.textContent = 'Processing AllMessages...'
+
+      try {
+        const processing = window.thresholdSigning.processAllMessages({
+          secretKey: secretKeyInput,
+          allMessages: [generatedAllMessage, receivedAllMessage]
+        })
+
+        appendOutput('Calling wasm_simplpedpop_recipient_all...')
+        appendOutput(`✓ Threshold key generated successfully: ${processing.thresholdPublicKey.length} bytes`)
+        appendOutput(`✓ SPP Output Message: ${processing.sppOutputMessage.length} bytes`)
+        appendOutput(`SPP Output Message (hex): ${processing.sppOutputMessageHex}`)
+        appendOutput(`✓ Signing Keypair: ${processing.signingKeypair.length} bytes`)
+        appendOutput(`First 16 bytes: ${processing.thresholdPublicKeyArray.slice(0, 16).map(b => b.toString(16).padStart(2, '0')).join(' ')}`)
+        appendOutput(`Threshold Public Key (hex): ${processing.thresholdPublicKeyHex}`)
+
+        outputDiv.textContent = `✓ Threshold key generated successfully!\nThreshold Public Key: ${processing.thresholdPublicKeyHex}\nSPP Output Message: ${processing.sppOutputMessageHex}`
+
+        const normalizedProcessing = setThresholdProcessingState(processing) || processing
+        appendOutput('✓ Threshold key processing completed successfully!')
+        appendOutput('The threshold public key, SPP output message, and signing keypair are now available for use in threshold signing operations.')
+        persistThresholdArtifacts(normalizedProcessing)
+
+        const round1Actions = document.getElementById('round1-signing-actions')
+        if (round1Actions) {
+          round1Actions.style.display = 'block'
+        }
+      } catch (err) {
+        appendOutput(`Error processing AllMessages: ${err.message}`)
+        outputDiv.textContent = `Error: ${err.message}`
+        console.error('Round 2 Generation error:', err)
+        return
+      }
+
+    } catch (err) {
+      appendOutput(`Error in Round 2 Generation: ${err.message}`)
+      console.error('Round 2 Generation error:', err)
+    }
   }
 }
 
@@ -3076,67 +3096,69 @@ async function sendSigningPackageToPeer() {
 }
 
 // Round 1 Signing Handler
-window['run-round1-signing'].onclick = async () => {
-  try {
-    const registeredAddress = typeof sessionState !== 'undefined' ? sessionState.mySS58Address : null
-    let signingKeypairToUse = window.generatedSigningKeypair
+if (window['run-round1-signing']) {
+  window['run-round1-signing'].onclick = async () => {
+    try {
+      const registeredAddress = typeof sessionState !== 'undefined' ? sessionState.mySS58Address : null
+      let signingKeypairToUse = window.generatedSigningKeypair
 
-    if (!signingKeypairToUse && registeredAddress) {
-      const persisted = loadPersistedUserState(registeredAddress)
-      const persistedHex = persisted?.thresholdArtifacts?.signingKeypairHex
-      if (typeof persistedHex === 'string') {
-        const decoded = decodeStoredHexToBytes(persistedHex)
-        if (decoded) {
-          signingKeypairToUse = decoded
-          window.generatedSigningKeypair = decoded
-          appendOutput('Using stored signing keypair from browser storage for Round 1 signing.')
-        }
-      }
-    }
-
-    if (!signingKeypairToUse) {
-      appendOutput('No signing keypair available. Please process AllMessages first.')
-      return
-    }
-
-    appendOutput('Running Round 1 signing...')
-    const result = window.thresholdSigning.runRound1({ signingKeypair: signingKeypairToUse })
-
-    updateRound1StateAndUi(result, {
-      ownerAddress: registeredAddress,
-      source: 'round1-signing'
-    })
-
-    // Automatically send commitments to connected peer
-    if (round1Commitments && round1Commitments.length > 0) {
-      if (sessionState.peerMultiaddr) {
-        try {
-          appendOutput('Sending Round 1 commitments to connected peer...')
-          appendOutput(`Commitments size: ${round1Commitments.length} bytes`)
-
-          // Convert commitments to hex string
-          const commitmentsHex = round1Commitments.map(b => b.toString(16).padStart(2, '0')).join('')
-          const messageToSend = `ROUND1_COMMITMENTS:${commitmentsHex}`
-
-          // Ensure we have a chat stream
-          const streamReady = await handleChatStream()
-          if (streamReady) {
-            // Send the commitments
-            await sendMessage(messageToSend)
-            appendOutput('✓ Round 1 commitments sent successfully to connected peer')
+      if (!signingKeypairToUse && registeredAddress) {
+        const persisted = loadPersistedUserState(registeredAddress)
+        const persistedHex = persisted?.thresholdArtifacts?.signingKeypairHex
+        if (typeof persistedHex === 'string') {
+          const decoded = decodeStoredHexToBytes(persistedHex)
+          if (decoded) {
+            signingKeypairToUse = decoded
+            window.generatedSigningKeypair = decoded
+            appendOutput('Using stored signing keypair from browser storage for Round 1 signing.')
           }
-        } catch (err) {
-          appendOutput(`Error sending commitments: ${err.message}`)
-          console.error('Send commitments error:', err)
         }
-      } else {
-        appendOutput('No peer connected. Commitments generated but not sent.')
       }
-    }
 
-  } catch (err) {
-    appendOutput(`Error in Round 1 signing: ${err.message}`)
-    console.error('Round 1 signing error:', err)
+      if (!signingKeypairToUse) {
+        appendOutput('No signing keypair available. Please process AllMessages first.')
+        return
+      }
+
+      appendOutput('Running Round 1 signing...')
+      const result = window.thresholdSigning.runRound1({ signingKeypair: signingKeypairToUse })
+
+      updateRound1StateAndUi(result, {
+        ownerAddress: registeredAddress,
+        source: 'round1-signing'
+      })
+
+      // Automatically send commitments to connected peer
+      if (round1Commitments && round1Commitments.length > 0) {
+        if (sessionState.peerMultiaddr) {
+          try {
+            appendOutput('Sending Round 1 commitments to connected peer...')
+            appendOutput(`Commitments size: ${round1Commitments.length} bytes`)
+
+            // Convert commitments to hex string
+            const commitmentsHex = round1Commitments.map(b => b.toString(16).padStart(2, '0')).join('')
+            const messageToSend = `ROUND1_COMMITMENTS:${commitmentsHex}`
+
+            // Ensure we have a chat stream
+            const streamReady = await handleChatStream()
+            if (streamReady) {
+              // Send the commitments
+              await sendMessage(messageToSend)
+              appendOutput('✓ Round 1 commitments sent successfully to connected peer')
+            }
+          } catch (err) {
+            appendOutput(`Error sending commitments: ${err.message}`)
+            console.error('Send commitments error:', err)
+          }
+        } else {
+          appendOutput('No peer connected. Commitments generated but not sent.')
+        }
+      }
+
+    } catch (err) {
+      appendOutput(`Error in Round 1 signing: ${err.message}`)
+      console.error('Round 1 signing error:', err)
+    }
   }
 }
 
@@ -3214,528 +3236,542 @@ const constructSignablePayloadForRound2 = async () => {
   }
 }
 
-window['run-round2-signing'].onclick = async () => {
-  try {
-    const registeredAddress = typeof sessionState !== 'undefined' ? sessionState.mySS58Address : null
-    const signingKeypairToUse = window.generatedSigningKeypair
-    const sppOutputMessageToUse = window.generatedSppOutputMessage
+if (window['run-round2-signing']) {
+  window['run-round2-signing'].onclick = async () => {
+    try {
+      const registeredAddress = typeof sessionState !== 'undefined' ? sessionState.mySS58Address : null
+      const signingKeypairToUse = window.generatedSigningKeypair
+      const sppOutputMessageToUse = window.generatedSppOutputMessage
 
-    if (!signingKeypairToUse) {
-      appendOutput('No signing keypair available. Please process AllMessages first.')
-      return
-    }
-
-    if (!sppOutputMessageToUse) {
-      appendOutput('No SPP output message available. Please process AllMessages first.')
-      return
-    }
-
-    const payloadInput = document.getElementById('round2-payload-input')
-    const manualPayload = payloadInput && payloadInput.value.trim()
-      ? payloadInput.value.trim()
-      : ''
-
-    const contextInput = document.getElementById('round2-context-input')
-    const contextRaw = contextInput && contextInput.value.trim()
-      ? contextInput.value.trim()
-      : ''
-    const defaultContext = EXTRINSIC_TEST_CONFIG.signingContext || 'substrate'
-    const contextText = contextRaw || defaultContext
-    const currentRound1Owner = window.cachedRound1Signing?.ownerAddress || null
-    const lastRound1Result = window.thresholdSigningState?.lastRound1 || null
-
-    if (registeredAddress && currentRound1Owner && currentRound1Owner !== registeredAddress) {
-      appendOutput(
-        `Round 1 signing artifacts currently loaded belong to ${currentRound1Owner}, but registered address is ${registeredAddress}. Please run Round 1 signing for the registered address before Round 2.`
-      )
-      return
-    }
-
-    const cloneRound1Arrays = (value) => {
-      if (!Array.isArray(value)) {
-        return []
-      }
-      return value.map((entry) => (Array.isArray(entry) ? entry.slice() : entry))
-    }
-
-    let hasRound1Arrays =
-      Array.isArray(round1Nonces) &&
-      round1Nonces.length > 0 &&
-      Array.isArray(round1Commitments) &&
-      round1Commitments.length > 0
-
-    if (!hasRound1Arrays && lastRound1Result) {
-      if (Array.isArray(lastRound1Result.signingNoncesArray) && lastRound1Result.signingNoncesArray.length > 0) {
-        round1Nonces = cloneRound1Arrays(lastRound1Result.signingNoncesArray)
-      }
-      if (
-        Array.isArray(lastRound1Result.signingCommitmentsArray) &&
-        lastRound1Result.signingCommitmentsArray.length > 0
-      ) {
-        round1Commitments = cloneRound1Arrays(lastRound1Result.signingCommitmentsArray)
+      if (!signingKeypairToUse) {
+        appendOutput('No signing keypair available. Please process AllMessages first.')
+        return
       }
 
-      hasRound1Arrays =
+      if (!sppOutputMessageToUse) {
+        appendOutput('No SPP output message available. Please process AllMessages first.')
+        return
+      }
+
+      const payloadInput = document.getElementById('round2-payload-input')
+      const manualPayload = payloadInput && payloadInput.value.trim()
+        ? payloadInput.value.trim()
+        : ''
+
+      const contextInput = document.getElementById('round2-context-input')
+      const contextRaw = contextInput && contextInput.value.trim()
+        ? contextInput.value.trim()
+        : ''
+      const defaultContext = EXTRINSIC_TEST_CONFIG.signingContext || 'substrate'
+      const contextText = contextRaw || defaultContext
+      const currentRound1Owner = window.cachedRound1Signing?.ownerAddress || null
+      const lastRound1Result = window.thresholdSigningState?.lastRound1 || null
+
+      if (registeredAddress && currentRound1Owner && currentRound1Owner !== registeredAddress) {
+        appendOutput(
+          `Round 1 signing artifacts currently loaded belong to ${currentRound1Owner}, but registered address is ${registeredAddress}. Please run Round 1 signing for the registered address before Round 2.`
+        )
+        return
+      }
+
+      const cloneRound1Arrays = (value) => {
+        if (!Array.isArray(value)) {
+          return []
+        }
+        return value.map((entry) => (Array.isArray(entry) ? entry.slice() : entry))
+      }
+
+      let hasRound1Arrays =
         Array.isArray(round1Nonces) &&
         round1Nonces.length > 0 &&
         Array.isArray(round1Commitments) &&
         round1Commitments.length > 0
-    }
 
-    if (!hasRound1Arrays) {
-      appendOutput('Round 1 signing data not found in this session. Please run Round 1 signing before Round 2.')
-      return
-    }
-
-    appendOutput('Using existing Round 1 signing data.')
-
-    const ensureByteArray = (value, label) => {
-      if (value instanceof Uint8Array) {
-        return value
-      }
-
-      if (Array.isArray(value)) {
-        if (value.length > 0 && Array.isArray(value[0])) {
-          const flattened = value.flat(Infinity)
-          if (!flattened.every((byte) => Number.isInteger(byte) && byte >= 0 && byte <= 255)) {
-            throw new Error(`${label} contains invalid byte values`)
-          }
-          return Uint8Array.from(flattened)
+      if (!hasRound1Arrays && lastRound1Result) {
+        if (Array.isArray(lastRound1Result.signingNoncesArray) && lastRound1Result.signingNoncesArray.length > 0) {
+          round1Nonces = cloneRound1Arrays(lastRound1Result.signingNoncesArray)
+        }
+        if (
+          Array.isArray(lastRound1Result.signingCommitmentsArray) &&
+          lastRound1Result.signingCommitmentsArray.length > 0
+        ) {
+          round1Commitments = cloneRound1Arrays(lastRound1Result.signingCommitmentsArray)
         }
 
-        if (!value.every((byte) => Number.isInteger(byte) && byte >= 0 && byte <= 255)) {
-          throw new Error(`${label} must contain numeric byte values`)
-        }
-        return Uint8Array.from(value)
+        hasRound1Arrays =
+          Array.isArray(round1Nonces) &&
+          round1Nonces.length > 0 &&
+          Array.isArray(round1Commitments) &&
+          round1Commitments.length > 0
       }
 
-      if (typeof value === 'string') {
-        const normalizedHex = normalizeHexString(value)
-        if (!normalizedHex) {
-          throw new Error(`${label} string must be hex-encoded`)
-        }
-        return hexToU8a(normalizedHex)
-      }
-
-      throw new Error(`${label} must be an array, Uint8Array, or hex string`)
-    }
-
-    if (!Array.isArray(round1Commitments) || round1Commitments.length === 0) {
-      appendOutput('No local commitments available. Please re-run Round 1 signing.')
-      appendOutput('No commitments available to run Round 2 signing.')
-      return
-    }
-
-    const commitmentEntries = []
-
-    try {
-      commitmentEntries.push({
-        source: 'local',
-        bytes: ensureByteArray(round1Commitments, 'Local commitments')
-      })
-    } catch (error) {
-      appendOutput(`Failed to normalize local commitments: ${error.message}`)
-      return
-    }
-
-    receivedRound1Commitments.forEach((commitment, index) => {
-      try {
-        commitmentEntries.push({
-          source: `peer[${index}]`,
-          bytes: ensureByteArray(commitment, `Peer commitments[${index}]`)
-        })
-      } catch (error) {
-        appendOutput(`Failed to normalize peer commitments[${index}]: ${error.message}`)
-      }
-    })
-
-    if (commitmentEntries.length === 0) {
-      appendOutput('No commitments available to run Round 2 signing.')
-      return
-    }
-
-    const seenCommitments = new Set()
-    const uniqueCommitments = []
-    commitmentEntries.forEach((entry) => {
-      const hex = toHexString(entry.bytes, { withPrefix: true })
-      if (seenCommitments.has(hex)) {
-        appendOutput(`Duplicate commitment detected from ${entry.source}; ignoring duplicate.`)
+      if (!hasRound1Arrays) {
+        appendOutput('Round 1 signing data not found in this session. Please run Round 1 signing before Round 2.')
         return
       }
-      seenCommitments.add(hex)
-      uniqueCommitments.push({
-        ...entry,
-        hex
-      })
-    })
 
-    if (uniqueCommitments.length === 0) {
-      appendOutput('No unique commitments available after deduplication.')
-      return
-    }
+      appendOutput('Using existing Round 1 signing data.')
 
-    // Order commitments according to verifying keys order in SPP output
-    // The verifying keys order matches the recipients order from AllMessage generation
-    const recipients = window.thresholdSigningState?.lastGeneratedAllMessage?.recipients || null
-    let orderedCommitments = []
-
-    if (recipients && Array.isArray(recipients) && recipients.length > 0) {
-      // Get local commitment
-      const localCommitmentEntry = uniqueCommitments.find(entry => entry.source === 'local')
-      const peerCommitmentEntries = uniqueCommitments.filter(entry => entry.source !== 'local')
-
-      // Create a map of commitments by participant index
-      const commitmentsByRecipientIndex = new Map()
-
-      // Match local commitment to registered address position in recipients
-      let useRecipientsOrder = true
-      if (localCommitmentEntry && registeredAddress) {
-        const localIndex = recipients.indexOf(registeredAddress)
-        if (localIndex !== -1) {
-          commitmentsByRecipientIndex.set(localIndex, localCommitmentEntry)
-        } else {
-          appendOutput(`Warning: Registered address ${registeredAddress} not found in recipients list. Using canonical ordering as fallback.`)
-          useRecipientsOrder = false
+      const ensureByteArray = (value, label) => {
+        if (value instanceof Uint8Array) {
+          return value
         }
-      } else if (localCommitmentEntry) {
-        // If no registered address, assume local is first recipient
-        commitmentsByRecipientIndex.set(0, localCommitmentEntry)
+
+        if (Array.isArray(value)) {
+          if (value.length > 0 && Array.isArray(value[0])) {
+            const flattened = value.flat(Infinity)
+            if (!flattened.every((byte) => Number.isInteger(byte) && byte >= 0 && byte <= 255)) {
+              throw new Error(`${label} contains invalid byte values`)
+            }
+            return Uint8Array.from(flattened)
+          }
+
+          if (!value.every((byte) => Number.isInteger(byte) && byte >= 0 && byte <= 255)) {
+            throw new Error(`${label} must contain numeric byte values`)
+          }
+          return Uint8Array.from(value)
+        }
+
+        if (typeof value === 'string') {
+          const normalizedHex = normalizeHexString(value)
+          if (!normalizedHex) {
+            throw new Error(`${label} string must be hex-encoded`)
+          }
+          return hexToU8a(normalizedHex)
+        }
+
+        throw new Error(`${label} must be an array, Uint8Array, or hex string`)
       }
 
-      if (!useRecipientsOrder) {
-        // Fallback to canonical ordering
-        orderedCommitments = [...uniqueCommitments]
-        orderedCommitments.sort((a, b) => b.hex.localeCompare(a.hex))
-      } else {
+      if (!Array.isArray(round1Commitments) || round1Commitments.length === 0) {
+        appendOutput('No local commitments available. Please re-run Round 1 signing.')
+        appendOutput('No commitments available to run Round 2 signing.')
+        return
+      }
 
-        // Distribute peer commitments to remaining positions
-        // We'll assign them to positions that don't have a commitment yet, in order
-        let peerIndex = 0
-        for (let i = 0; i < recipients.length && peerIndex < peerCommitmentEntries.length; i++) {
-          if (!commitmentsByRecipientIndex.has(i)) {
-            commitmentsByRecipientIndex.set(i, peerCommitmentEntries[peerIndex])
-            peerIndex++
+      const commitmentEntries = []
+
+      try {
+        commitmentEntries.push({
+          source: 'local',
+          bytes: ensureByteArray(round1Commitments, 'Local commitments')
+        })
+      } catch (error) {
+        appendOutput(`Failed to normalize local commitments: ${error.message}`)
+        return
+      }
+
+      receivedRound1Commitments.forEach((commitment, index) => {
+        try {
+          commitmentEntries.push({
+            source: `peer[${index}]`,
+            bytes: ensureByteArray(commitment, `Peer commitments[${index}]`)
+          })
+        } catch (error) {
+          appendOutput(`Failed to normalize peer commitments[${index}]: ${error.message}`)
+        }
+      })
+
+      if (commitmentEntries.length === 0) {
+        appendOutput('No commitments available to run Round 2 signing.')
+        return
+      }
+
+      const seenCommitments = new Set()
+      const uniqueCommitments = []
+      commitmentEntries.forEach((entry) => {
+        const hex = toHexString(entry.bytes, { withPrefix: true })
+        if (seenCommitments.has(hex)) {
+          appendOutput(`Duplicate commitment detected from ${entry.source}; ignoring duplicate.`)
+          return
+        }
+        seenCommitments.add(hex)
+        uniqueCommitments.push({
+          ...entry,
+          hex
+        })
+      })
+
+      if (uniqueCommitments.length === 0) {
+        appendOutput('No unique commitments available after deduplication.')
+        return
+      }
+
+      // Order commitments according to verifying keys order in SPP output
+      // The verifying keys order matches the recipients order from AllMessage generation
+      const recipients = window.thresholdSigningState?.lastGeneratedAllMessage?.recipients || null
+      let orderedCommitments = []
+
+      if (recipients && Array.isArray(recipients) && recipients.length > 0) {
+        // Get local commitment
+        const localCommitmentEntry = uniqueCommitments.find(entry => entry.source === 'local')
+        const peerCommitmentEntries = uniqueCommitments.filter(entry => entry.source !== 'local')
+
+        // Create a map of commitments by participant index
+        const commitmentsByRecipientIndex = new Map()
+
+        // Match local commitment to registered address position in recipients
+        let useRecipientsOrder = true
+        if (localCommitmentEntry && registeredAddress) {
+          const localIndex = recipients.indexOf(registeredAddress)
+          if (localIndex !== -1) {
+            commitmentsByRecipientIndex.set(localIndex, localCommitmentEntry)
+          } else {
+            appendOutput(`Warning: Registered address ${registeredAddress} not found in recipients list. Using canonical ordering as fallback.`)
+            useRecipientsOrder = false
           }
+        } else if (localCommitmentEntry) {
+          // If no registered address, assume local is first recipient
+          commitmentsByRecipientIndex.set(0, localCommitmentEntry)
         }
 
-        // If we still have peer commitments, add them to remaining positions
-        while (peerIndex < peerCommitmentEntries.length) {
+        if (!useRecipientsOrder) {
+          // Fallback to canonical ordering
+          orderedCommitments = [...uniqueCommitments]
+          orderedCommitments.sort((a, b) => b.hex.localeCompare(a.hex))
+        } else {
+
+          // Distribute peer commitments to remaining positions
+          // We'll assign them to positions that don't have a commitment yet, in order
+          let peerIndex = 0
           for (let i = 0; i < recipients.length && peerIndex < peerCommitmentEntries.length; i++) {
             if (!commitmentsByRecipientIndex.has(i)) {
               commitmentsByRecipientIndex.set(i, peerCommitmentEntries[peerIndex])
               peerIndex++
-              break
             }
           }
+
+          // If we still have peer commitments, add them to remaining positions
+          while (peerIndex < peerCommitmentEntries.length) {
+            for (let i = 0; i < recipients.length && peerIndex < peerCommitmentEntries.length; i++) {
+              if (!commitmentsByRecipientIndex.has(i)) {
+                commitmentsByRecipientIndex.set(i, peerCommitmentEntries[peerIndex])
+                peerIndex++
+                break
+              }
+            }
+          }
+
+          // Sort by recipient index to match verifying keys order
+          const sortedIndices = Array.from(commitmentsByRecipientIndex.keys()).sort((a, b) => a - b)
+          orderedCommitments = sortedIndices.map(index => commitmentsByRecipientIndex.get(index))
+
+          appendOutput(`Ordered ${orderedCommitments.length} commitment(s) according to verifying keys order in SPP output`)
         }
-
-        // Sort by recipient index to match verifying keys order
-        const sortedIndices = Array.from(commitmentsByRecipientIndex.keys()).sort((a, b) => a - b)
-        orderedCommitments = sortedIndices.map(index => commitmentsByRecipientIndex.get(index))
-
-        appendOutput(`Ordered ${orderedCommitments.length} commitment(s) according to verifying keys order in SPP output`)
+      } else {
+        // Fallback to canonical ordering if recipients order is not available
+        appendOutput('Warning: Recipients order not available. Using canonical ordering as fallback.')
+        orderedCommitments = [...uniqueCommitments]
+        orderedCommitments.sort((a, b) => b.hex.localeCompare(a.hex))
       }
-    } else {
-      // Fallback to canonical ordering if recipients order is not available
-      appendOutput('Warning: Recipients order not available. Using canonical ordering as fallback.')
-      orderedCommitments = [...uniqueCommitments]
-      orderedCommitments.sort((a, b) => b.hex.localeCompare(a.hex))
-    }
 
-    if (orderedCommitments.length === 0) {
-      appendOutput('No commitments available after ordering.')
+      if (orderedCommitments.length === 0) {
+        appendOutput('No commitments available after ordering.')
+        return
+      }
+
+      const allCommitmentsBytes = orderedCommitments.map((entry) => entry.bytes)
+      appendOutput(`Using ${allCommitmentsBytes.length} commitment set(s) ordered by verifying keys`)
+
+      let payloadBytes
+      let payloadHex
+      let payloadSource
+
+      if (manualPayload) {
+        // Use manual payload input
+        appendOutput('Using manual payload input...')
+        try {
+          payloadBytes = toPayloadUint8Array(manualPayload, 'payload')
+          payloadHex = toHexString(payloadBytes, { withPrefix: true })
+          payloadSource = 'manual'
+          appendOutput(`✓ Manual payload ready (${payloadBytes.length} bytes)`)
+          appendOutput(`Payload preview: ${payloadHex.substring(0, 66)}...`)
+        } catch (error) {
+          appendOutput(`Failed to process manual payload: ${error.message}`)
+          return
+        }
+      } else {
+        // Use default Substrate extrinsic payload
+        appendOutput('Constructing signable payload using extrinsic configuration...')
+        let signablePayloadDetails
+        try {
+          signablePayloadDetails = await constructSignablePayloadForRound2()
+          payloadBytes = signablePayloadDetails.signableU8a
+          payloadHex = signablePayloadDetails.signableHex
+          payloadSource = 'extrinsic'
+          appendOutput(`✓ Signable payload ready (${payloadBytes.length} bytes) from ${signablePayloadDetails.chain}`)
+          appendOutput(`Payload preview: ${payloadHex.substring(0, 66)}...`)
+
+          window.thresholdSigningState = window.thresholdSigningState || {}
+          window.thresholdSigningState.lastSignablePayload = {
+            ...signablePayloadDetails,
+            length: payloadBytes.length
+          }
+        } catch (error) {
+          appendOutput(`Failed to construct signable payload: ${error.message}`)
+          return
+        }
+      }
+
+      appendOutput('Running Round 2 signing...')
+      appendOutput(`Context: ${contextText}`)
+      appendOutput(`Payload source: ${payloadSource === 'manual' ? 'Manual input' : 'Substrate extrinsic'}`)
+
+      const commitmentsNormalized = allCommitmentsBytes.map((bytes) => Array.from(bytes))
+      const commitmentsHex = allCommitmentsBytes.map((bytes) => toHexString(bytes, { withPrefix: true }))
+      const commitmentsJson = JSON.stringify(commitmentsNormalized)
+      const commitmentsBytes = new TextEncoder().encode(commitmentsJson)
+
+      const signingKeypairBytes = ensureByteArray(signingKeypairToUse, 'Signing keypair')
+      const signingNoncesBytes = ensureByteArray(round1Nonces, 'Signing nonces')
+      const sppOutputMessageBytes = ensureByteArray(sppOutputMessageToUse, 'SPP output message')
+      const sppOutputHex = toHexString(sppOutputMessageBytes, { withPrefix: true })
+
+      appendOutput('wasm_threshold_sign_round2 inputs:')
+      appendOutput(`• signingKeypairBytes (${signingKeypairBytes.length} bytes): ${toHexString(signingKeypairBytes, { withPrefix: true })}`)
+      appendOutput(
+        `  ↳ bytes: [${Array.from(signingKeypairBytes)
+          .map((byte) => byte.toString())
+          .join(', ')}]`
+      )
+      appendOutput(`• signingNoncesBytes (${signingNoncesBytes.length} bytes): ${toHexString(signingNoncesBytes, { withPrefix: true })}`)
+      appendOutput(
+        `  ↳ bytes: [${Array.from(signingNoncesBytes)
+          .map((byte) => byte.toString())
+          .join(', ')}]`
+      )
+      appendOutput(`• commitmentsBytes (${commitmentsBytes.length} bytes): ${toHexString(commitmentsBytes, { withPrefix: true })}`)
+      appendOutput(
+        `  ↳ bytes: [${Array.from(commitmentsBytes)
+          .map((byte) => byte.toString())
+          .join(', ')}]`
+      )
+      appendOutput(`• sppOutputMessageBytes (${sppOutputMessageBytes.length} bytes): ${sppOutputHex}`)
+      appendOutput(
+        `  ↳ bytes: [${Array.from(sppOutputMessageBytes)
+          .map((byte) => byte.toString())
+          .join(', ')}]`
+      )
+      appendOutput(`• payloadBytes (${payloadBytes.length} bytes): ${payloadHex}`)
+      appendOutput(
+        `  ↳ bytes: [${Array.from(payloadBytes)
+          .map((byte) => byte.toString())
+          .join(', ')}]`
+      )
+      appendOutput(`• context: ${contextText}`)
+
+      const signingPackage = window.wasm_threshold_sign_round2(
+        signingKeypairBytes,
+        signingNoncesBytes,
+        commitmentsBytes,
+        sppOutputMessageBytes,
+        payloadBytes,
+        contextText
+      )
+
+      const result = {
+        signingPackage,
+        signingPackageArray: Array.from(signingPackage),
+        signingPackageHex: toHexString(signingPackage),
+        commitmentsJson,
+        commitmentsNormalized,
+        payloadBytes,
+        context: contextText,
+        commonData: {
+          context: contextText,
+          payloadHex,
+          commitmentsHex,
+          sppOutputHex
+        }
+      }
+
+      window.thresholdSigningState = window.thresholdSigningState || {}
+      window.thresholdSigningState.lastRound2CommonData = result.commonData
+
+      updateRound2StateAndUi(result)
+    } catch (err) {
+      appendOutput(`Error in Round 2 signing: ${err.message}`)
+      console.error('Round 2 signing error:', err)
+    }
+  }
+}
+
+if (window['load-round1-commitments']) {
+  window['load-round1-commitments'].onclick = () => {
+    const textarea = document.getElementById('peer-round1-commitments')
+    if (!textarea) {
+      appendOutput('Peer commitments input not found in DOM.')
       return
     }
 
-    const allCommitmentsBytes = orderedCommitments.map((entry) => entry.bytes)
-    appendOutput(`Using ${allCommitmentsBytes.length} commitment set(s) ordered by verifying keys`)
-
-    let payloadBytes
-    let payloadHex
-    let payloadSource
-
-    if (manualPayload) {
-      // Use manual payload input
-      appendOutput('Using manual payload input...')
-      try {
-        payloadBytes = toPayloadUint8Array(manualPayload, 'payload')
-        payloadHex = toHexString(payloadBytes, { withPrefix: true })
-        payloadSource = 'manual'
-        appendOutput(`✓ Manual payload ready (${payloadBytes.length} bytes)`)
-        appendOutput(`Payload preview: ${payloadHex.substring(0, 66)}...`)
-      } catch (error) {
-        appendOutput(`Failed to process manual payload: ${error.message}`)
-        return
-      }
-    } else {
-      // Use default Substrate extrinsic payload
-      appendOutput('Constructing signable payload using extrinsic configuration...')
-      let signablePayloadDetails
-      try {
-        signablePayloadDetails = await constructSignablePayloadForRound2()
-        payloadBytes = signablePayloadDetails.signableU8a
-        payloadHex = signablePayloadDetails.signableHex
-        payloadSource = 'extrinsic'
-        appendOutput(`✓ Signable payload ready (${payloadBytes.length} bytes) from ${signablePayloadDetails.chain}`)
-        appendOutput(`Payload preview: ${payloadHex.substring(0, 66)}...`)
-
-        window.thresholdSigningState = window.thresholdSigningState || {}
-        window.thresholdSigningState.lastSignablePayload = {
-          ...signablePayloadDetails,
-          length: payloadBytes.length
-        }
-      } catch (error) {
-        appendOutput(`Failed to construct signable payload: ${error.message}`)
-        return
-      }
+    const rawText = textarea.value.trim()
+    if (!rawText) {
+      appendOutput('Please paste peer commitments JSON before loading.')
+      return
     }
 
-    appendOutput('Running Round 2 signing...')
-    appendOutput(`Context: ${contextText}`)
-    appendOutput(`Payload source: ${payloadSource === 'manual' ? 'Manual input' : 'Substrate extrinsic'}`)
-
-    const commitmentsNormalized = allCommitmentsBytes.map((bytes) => Array.from(bytes))
-    const commitmentsHex = allCommitmentsBytes.map((bytes) => toHexString(bytes, { withPrefix: true }))
-    const commitmentsJson = JSON.stringify(commitmentsNormalized)
-    const commitmentsBytes = new TextEncoder().encode(commitmentsJson)
-
-    const signingKeypairBytes = ensureByteArray(signingKeypairToUse, 'Signing keypair')
-    const signingNoncesBytes = ensureByteArray(round1Nonces, 'Signing nonces')
-    const sppOutputMessageBytes = ensureByteArray(sppOutputMessageToUse, 'SPP output message')
-    const sppOutputHex = toHexString(sppOutputMessageBytes, { withPrefix: true })
-
-    appendOutput('wasm_threshold_sign_round2 inputs:')
-    appendOutput(`• signingKeypairBytes (${signingKeypairBytes.length} bytes): ${toHexString(signingKeypairBytes, { withPrefix: true })}`)
-    appendOutput(
-      `  ↳ bytes: [${Array.from(signingKeypairBytes)
-        .map((byte) => byte.toString())
-        .join(', ')}]`
-    )
-    appendOutput(`• signingNoncesBytes (${signingNoncesBytes.length} bytes): ${toHexString(signingNoncesBytes, { withPrefix: true })}`)
-    appendOutput(
-      `  ↳ bytes: [${Array.from(signingNoncesBytes)
-        .map((byte) => byte.toString())
-        .join(', ')}]`
-    )
-    appendOutput(`• commitmentsBytes (${commitmentsBytes.length} bytes): ${toHexString(commitmentsBytes, { withPrefix: true })}`)
-    appendOutput(
-      `  ↳ bytes: [${Array.from(commitmentsBytes)
-        .map((byte) => byte.toString())
-        .join(', ')}]`
-    )
-    appendOutput(`• sppOutputMessageBytes (${sppOutputMessageBytes.length} bytes): ${sppOutputHex}`)
-    appendOutput(
-      `  ↳ bytes: [${Array.from(sppOutputMessageBytes)
-        .map((byte) => byte.toString())
-        .join(', ')}]`
-    )
-    appendOutput(`• payloadBytes (${payloadBytes.length} bytes): ${payloadHex}`)
-    appendOutput(
-      `  ↳ bytes: [${Array.from(payloadBytes)
-        .map((byte) => byte.toString())
-        .join(', ')}]`
-    )
-    appendOutput(`• context: ${contextText}`)
-
-    const signingPackage = window.wasm_threshold_sign_round2(
-      signingKeypairBytes,
-      signingNoncesBytes,
-      commitmentsBytes,
-      sppOutputMessageBytes,
-      payloadBytes,
-      contextText
-    )
-
-    const result = {
-      signingPackage,
-      signingPackageArray: Array.from(signingPackage),
-      signingPackageHex: toHexString(signingPackage),
-      commitmentsJson,
-      commitmentsNormalized,
-      payloadBytes,
-      context: contextText,
-      commonData: {
-        context: contextText,
-        payloadHex,
-        commitmentsHex,
-        sppOutputHex
-      }
+    try {
+      const normalized = parsePeerByteArraysInput(rawText, 'peer commitments')
+      receivedRound1Commitments = normalized
+      window.thresholdSigningState.peerCommitments = normalized.map(entry => [...entry])
+      textarea.value = JSON.stringify(normalized, null, 2)
+      updatePeerRound1CommitmentsStatus()
+      appendOutput(`Loaded ${normalized.length} peer commitment set(s) from manual input.`)
+    } catch (error) {
+      appendOutput(`Failed to load peer commitments: ${error.message}`)
     }
-
-    window.thresholdSigningState = window.thresholdSigningState || {}
-    window.thresholdSigningState.lastRound2CommonData = result.commonData
-
-    updateRound2StateAndUi(result)
-  } catch (err) {
-    appendOutput(`Error in Round 2 signing: ${err.message}`)
-    console.error('Round 2 signing error:', err)
   }
 }
 
-window['load-round1-commitments'].onclick = () => {
-  const textarea = document.getElementById('peer-round1-commitments')
-  if (!textarea) {
-    appendOutput('Peer commitments input not found in DOM.')
-    return
-  }
-
-  const rawText = textarea.value.trim()
-  if (!rawText) {
-    appendOutput('Please paste peer commitments JSON before loading.')
-    return
-  }
-
-  try {
-    const normalized = parsePeerByteArraysInput(rawText, 'peer commitments')
-    receivedRound1Commitments = normalized
-    window.thresholdSigningState.peerCommitments = normalized.map(entry => [...entry])
-    textarea.value = JSON.stringify(normalized, null, 2)
+if (window['clear-round1-commitments']) {
+  window['clear-round1-commitments'].onclick = () => {
+    const textarea = document.getElementById('peer-round1-commitments')
+    if (textarea) {
+      textarea.value = ''
+    }
+    receivedRound1Commitments = []
+    window.thresholdSigningState.peerCommitments = []
     updatePeerRound1CommitmentsStatus()
-    appendOutput(`Loaded ${normalized.length} peer commitment set(s) from manual input.`)
-  } catch (error) {
-    appendOutput(`Failed to load peer commitments: ${error.message}`)
+    appendOutput('Peer commitments cleared.')
   }
-}
-
-window['clear-round1-commitments'].onclick = () => {
-  const textarea = document.getElementById('peer-round1-commitments')
-  if (textarea) {
-    textarea.value = ''
-  }
-  receivedRound1Commitments = []
-  window.thresholdSigningState.peerCommitments = []
-  updatePeerRound1CommitmentsStatus()
-  appendOutput('Peer commitments cleared.')
 }
 
 // Send Signing Package Handler
-window['send-signing-package'].onclick = () => {
-  sendSigningPackageToPeer()
+if (window['send-signing-package']) {
+  window['send-signing-package'].onclick = () => {
+    sendSigningPackageToPeer()
+  }
 }
 
 // Aggregate Signatures Handler
-window['aggregate-signatures'].onclick = async () => {
-  try {
-    if (!round2SigningPackage) {
-      appendOutput('No signing package available. Please run Round 2 signing first.')
-      return
-    }
-
-    // Collect all signing packages
-    const allSigningPackages = [round2SigningPackage]
-    if (receivedSigningPackages.length > 0) {
-      allSigningPackages.push(...receivedSigningPackages)
-      appendOutput(`Aggregating ${allSigningPackages.length} signing packages...`)
-    } else {
-      appendOutput('Warning: No signing packages received from other participants.')
-      appendOutput('You need at least threshold signing packages to aggregate.')
-      return
-    }
-
-    appendOutput('Aggregating threshold signature...')
-    appendOutput(`Our signing package: ${round2SigningPackage.length} bytes`)
-    appendOutput(`Received signing packages: ${receivedSigningPackages.length}`)
-    receivedSigningPackages.forEach((pkg, idx) => {
-      appendOutput(`  Package ${idx + 1}: ${pkg.length} bytes`)
-    })
-
-    // Validate that we have enough signing packages
-    const thresholdInput = document.getElementById('threshold-input')
-    const threshold = thresholdInput ? parseInt(thresholdInput.value) : 2
-    if (allSigningPackages.length < threshold) {
-      appendOutput(`Error: Need at least ${threshold} signing packages for threshold ${threshold}, but only have ${allSigningPackages.length}`)
-      return
-    }
-
-    appendOutput(`Aggregating with ${allSigningPackages.length} packages (threshold: ${threshold})`)
-
-    // Prepare signing packages for WASM (JSON encode)
-    // The format should be an array of byte arrays: [[bytes...], [bytes...]]
+if (window['aggregate-signatures']) {
+  window['aggregate-signatures'].onclick = async () => {
     try {
-      const aggregation = window.thresholdSigning.aggregateSignatures({
-        signingPackages: allSigningPackages
+      if (!round2SigningPackage) {
+        appendOutput('No signing package available. Please run Round 2 signing first.')
+        return
+      }
+
+      // Collect all signing packages
+      const allSigningPackages = [round2SigningPackage]
+      if (receivedSigningPackages.length > 0) {
+        allSigningPackages.push(...receivedSigningPackages)
+        appendOutput(`Aggregating ${allSigningPackages.length} signing packages...`)
+      } else {
+        appendOutput('Warning: No signing packages received from other participants.')
+        appendOutput('You need at least threshold signing packages to aggregate.')
+        return
+      }
+
+      appendOutput('Aggregating threshold signature...')
+      appendOutput(`Our signing package: ${round2SigningPackage.length} bytes`)
+      appendOutput(`Received signing packages: ${receivedSigningPackages.length}`)
+      receivedSigningPackages.forEach((pkg, idx) => {
+        appendOutput(`  Package ${idx + 1}: ${pkg.length} bytes`)
       })
 
-      appendOutput(`JSON length: ${aggregation.signingPackagesJson.length} characters`)
-      appendOutput(`Bytes length: ${new TextEncoder().encode(aggregation.signingPackagesJson).length} bytes`)
+      // Validate that we have enough signing packages
+      const thresholdInput = document.getElementById('threshold-input')
+      const threshold = thresholdInput ? parseInt(thresholdInput.value) : 2
+      if (allSigningPackages.length < threshold) {
+        appendOutput(`Error: Need at least ${threshold} signing packages for threshold ${threshold}, but only have ${allSigningPackages.length}`)
+        return
+      }
 
-      appendOutput(`✓ Signature aggregation completed`)
-      appendOutput(`✓ Aggregated signature: ${aggregation.aggregatedSignatureArray.length} bytes`)
-      appendOutput(`✓ Signature (hex): ${aggregation.aggregatedSignatureHex}`)
+      appendOutput(`Aggregating with ${allSigningPackages.length} packages (threshold: ${threshold})`)
 
-      const signingPackageOutput = document.getElementById('signing-package-output')
-      if (signingPackageOutput) {
-        signingPackageOutput.innerHTML = `
+      // Prepare signing packages for WASM (JSON encode)
+      // The format should be an array of byte arrays: [[bytes...], [bytes...]]
+      try {
+        const aggregation = window.thresholdSigning.aggregateSignatures({
+          signingPackages: allSigningPackages
+        })
+
+        appendOutput(`JSON length: ${aggregation.signingPackagesJson.length} characters`)
+        appendOutput(`Bytes length: ${new TextEncoder().encode(aggregation.signingPackagesJson).length} bytes`)
+
+        appendOutput(`✓ Signature aggregation completed`)
+        appendOutput(`✓ Aggregated signature: ${aggregation.aggregatedSignatureArray.length} bytes`)
+        appendOutput(`✓ Signature (hex): ${aggregation.aggregatedSignatureHex}`)
+
+        const signingPackageOutput = document.getElementById('signing-package-output')
+        if (signingPackageOutput) {
+          signingPackageOutput.innerHTML = `
           <p><strong>Aggregated Signature (${aggregation.aggregatedSignatureArray.length} bytes):</strong></p>
           <p style="word-break: break-all;">${aggregation.aggregatedSignatureHex}</p>
         `
-      }
-
-      window.aggregatedSignature = Array.from(aggregation.aggregatedSignature)
-      window.thresholdSigningState.lastAggregatedSignature = aggregation
-    } catch (wasmErr) {
-      // Handle WASM-specific errors
-      let errorMessage = 'Unknown error'
-      if (wasmErr && typeof wasmErr === 'object') {
-        if (wasmErr.message) {
-          errorMessage = wasmErr.message
-        } else if (wasmErr.toString && wasmErr.toString() !== '[object Object]') {
-          errorMessage = wasmErr.toString()
-        } else {
-          errorMessage = JSON.stringify(wasmErr)
         }
-      } else if (wasmErr) {
-        errorMessage = String(wasmErr)
+
+        window.aggregatedSignature = Array.from(aggregation.aggregatedSignature)
+        window.thresholdSigningState.lastAggregatedSignature = aggregation
+      } catch (wasmErr) {
+        // Handle WASM-specific errors
+        let errorMessage = 'Unknown error'
+        if (wasmErr && typeof wasmErr === 'object') {
+          if (wasmErr.message) {
+            errorMessage = wasmErr.message
+          } else if (wasmErr.toString && wasmErr.toString() !== '[object Object]') {
+            errorMessage = wasmErr.toString()
+          } else {
+            errorMessage = JSON.stringify(wasmErr)
+          }
+        } else if (wasmErr) {
+          errorMessage = String(wasmErr)
+        }
+
+        appendOutput(`Error in WASM aggregation: ${errorMessage}`)
+        console.error('WASM aggregation error details:', wasmErr)
+        console.error('Signing packages being sent:', allSigningPackages.map(p => p.length))
+        throw wasmErr
       }
 
-      appendOutput(`Error in WASM aggregation: ${errorMessage}`)
-      console.error('WASM aggregation error details:', wasmErr)
-      console.error('Signing packages being sent:', allSigningPackages.map(p => p.length))
-      throw wasmErr
+    } catch (err) {
+      const errorMessage = err?.message || err?.toString() || String(err) || 'Unknown error'
+      appendOutput(`Error aggregating signatures: ${errorMessage}`)
+      console.error('Aggregate signatures error:', err)
+      console.error('Error stack:', err?.stack)
+    }
+  }
+}
+
+if (window['load-signing-packages']) {
+  window['load-signing-packages'].onclick = () => {
+    const textarea = document.getElementById('peer-signing-packages')
+    if (!textarea) {
+      appendOutput('Peer signing packages input not found in DOM.')
+      return
     }
 
-  } catch (err) {
-    const errorMessage = err?.message || err?.toString() || String(err) || 'Unknown error'
-    appendOutput(`Error aggregating signatures: ${errorMessage}`)
-    console.error('Aggregate signatures error:', err)
-    console.error('Error stack:', err?.stack)
+    const rawText = textarea.value.trim()
+    if (!rawText) {
+      appendOutput('Please paste peer signing packages JSON before loading.')
+      return
+    }
+
+    try {
+      const normalized = parsePeerByteArraysInput(rawText, 'peer signing packages')
+      receivedSigningPackages = normalized
+      window.thresholdSigningState.peerSigningPackages = normalized.map(entry => [...entry])
+      textarea.value = JSON.stringify(normalized, null, 2)
+      updatePeerSigningPackagesStatus()
+      appendOutput(`Loaded ${normalized.length} peer signing package(s) from manual input.`)
+    } catch (error) {
+      appendOutput(`Failed to load peer signing packages: ${error.message}`)
+    }
   }
 }
 
-window['load-signing-packages'].onclick = () => {
-  const textarea = document.getElementById('peer-signing-packages')
-  if (!textarea) {
-    appendOutput('Peer signing packages input not found in DOM.')
-    return
-  }
-
-  const rawText = textarea.value.trim()
-  if (!rawText) {
-    appendOutput('Please paste peer signing packages JSON before loading.')
-    return
-  }
-
-  try {
-    const normalized = parsePeerByteArraysInput(rawText, 'peer signing packages')
-    receivedSigningPackages = normalized
-    window.thresholdSigningState.peerSigningPackages = normalized.map(entry => [...entry])
-    textarea.value = JSON.stringify(normalized, null, 2)
+if (window['clear-signing-packages']) {
+  window['clear-signing-packages'].onclick = () => {
+    const textarea = document.getElementById('peer-signing-packages')
+    if (textarea) {
+      textarea.value = ''
+    }
+    receivedSigningPackages = []
+    window.thresholdSigningState.peerSigningPackages = []
     updatePeerSigningPackagesStatus()
-    appendOutput(`Loaded ${normalized.length} peer signing package(s) from manual input.`)
-  } catch (error) {
-    appendOutput(`Failed to load peer signing packages: ${error.message}`)
+    appendOutput('Peer signing packages cleared.')
   }
-}
-
-window['clear-signing-packages'].onclick = () => {
-  const textarea = document.getElementById('peer-signing-packages')
-  if (textarea) {
-    textarea.value = ''
-  }
-  receivedSigningPackages = []
-  window.thresholdSigningState.peerSigningPackages = []
-  updatePeerSigningPackagesStatus()
-  appendOutput('Peer signing packages cleared.')
 }
 
 
