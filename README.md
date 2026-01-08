@@ -242,7 +242,7 @@ docker compose up -d
 ### Manual Testing Steps 
 
 1. **Open the first browser window/tab:**
-   - Navigate to `http://localhost:5173` (local) or `http://http://34.26.:5173` (cloud instance)
+   - Navigate to `http://localhost:5173` (local) or `http://34.26.128.171:5173` (cloud instance)
    - Wait for the "Connected to relay" message
    - In the "SS58 Address" input field, enter an SS58 address. For example: `5CXkZyy4S5b3w16wvKA2hUwzp5q2y7UtRPkXnW97QGvDN8Jw`
    - In the "Secret Key" input field, enter the corresponding 32-byte secret key in hex format. For example: `0x473a77675b8e77d90c1b6dc2dbe6ac533b0853790ea8bcadf0ee8b5da4cfbbce`
@@ -250,7 +250,7 @@ docker compose up -d
    - Verify you see: "Address registered with proof of possession!"
 
 2. **Open a second browser window/tab:**
-   - Navigate to `http://localhost:5174` (local) or `http://http://34.26.:5173` (cloud instance)
+   - Navigate to `http://localhost:5174` (local) or `http://34.26.128.171:5173` (cloud instance)
    - Wait for the "Connected to relay" message
    - In the "SS58 Address" input field, enter an SS58 address. For example: `5Gma8SNsn6rkQf9reAWFQ9WKq8bwwHtSzwMYtLTdhYsGPKiy`
    - In the "Secret Key" input field, enter the corresponding 32-byte secret key in hex format. For example: `0xdb9ddbb3d6671c4de8248a4fba95f3d873dc21a0434b52951bb33730c1ac93d7`
