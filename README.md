@@ -108,8 +108,7 @@ Two browsers will exchange messages and produce a valid threshold signature over
 ## Build and Testing
 
 ### Cloud Instance
-- Follow Manual Testing Steps directly without the need for a local setup
-- Follow instructions in DEPLOYMENT.MD if want to deploy your own service 
+- Follow Manual Testing Steps without the need for a local setup
 
 ### Local (Without Docker)
 
