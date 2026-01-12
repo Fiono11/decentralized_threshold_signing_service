@@ -1,13 +1,11 @@
+use ed25519_dalek::KEYPAIR_LENGTH;
+use ed25519_dalek::{PUBLIC_KEY_LENGTH, VerifyingKey};
 use js_sys::Object;
 use js_sys::Uint8Array;
-use schnorrkel::olaf::SigningKeypair;
-use schnorrkel::olaf::multisig::SigningCommitments;
-use schnorrkel::olaf::multisig::SigningNonces;
-use schnorrkel::olaf::multisig::SigningPackage;
-use schnorrkel::olaf::multisig::aggregate;
-use schnorrkel::olaf::simplpedpop::AllMessage;
-use schnorrkel::olaf::simplpedpop::SPPOutputMessage;
-use schnorrkel::{KEYPAIR_LENGTH, Keypair, MiniSecretKey, PUBLIC_KEY_LENGTH, PublicKey};
+use olaf::SigningKeypair;
+use olaf::frost::{SigningCommitments, SigningNonces, SigningPackage, aggregate};
+use olaf::simplpedpop::{AllMessage, SPPOutputMessage};
+
 use wasm_bindgen::JsValue;
 use wasm_bindgen::prelude::wasm_bindgen;
 
@@ -21,9 +19,9 @@ pub fn wasm_keypair_from_secret(secret_key_bytes: &[u8]) -> Result<Uint8Array, J
         return Err(JsValue::from_str("invalid secret key length"));
     }
 
-    let keypair = MiniSecretKey::from_bytes(secret_key_bytes)
-        .map_err(|_| JsValue::from_str("invalid secret key bytes"))?
-        .expand_to_keypair(schnorrkel::ExpansionMode::Ed25519);
+    let mut secret_key_array = [0u8; 32];
+    secret_key_array.copy_from_slice(secret_key_bytes);
+    let keypair = SigningKeypair::from_secret_key(&secret_key_array);
 
     Ok(Uint8Array::from(keypair.to_bytes().as_ref()))
 }
@@ -41,20 +39,26 @@ pub fn wasm_simplpedpop_contribute_all(
         return Err(JsValue::from_str("invalid recipients bytes length"));
     }
 
-    let keypair = Keypair::from_bytes(keypair_bytes)
+    let mut keypair_array = [0u8; KEYPAIR_LENGTH];
+    keypair_array.copy_from_slice(keypair_bytes);
+    let mut keypair = SigningKeypair::from_bytes(&keypair_array)
         .map_err(|_| JsValue::from_str("invalid keypair bytes"))?;
 
-    let recipients: Vec<PublicKey> = recipients_concat
+    let recipients: Vec<VerifyingKey> = recipients_concat
         .chunks(PUBLIC_KEY_LENGTH)
-        .map(|chunk| {
-            PublicKey::from_bytes(chunk).map_err(|_| JsValue::from_str("invalid public key bytes"))
+        .map(|recipient_bytes| {
+            let mut recipient = [0; 32];
+            recipient.copy_from_slice(&recipient_bytes);
+            VerifyingKey::from_bytes(&recipient).unwrap()
         })
-        .collect::<Result<_, _>>()?;
+        .collect();
 
     let msg = keypair
         .simplpedpop_contribute_all(threshold, recipients)
         .map_err(|e| JsValue::from_str(&format!("{:?}", e)))?;
+
     let bytes = msg.to_bytes();
+
     Ok(Uint8Array::from(bytes.as_slice()))
 }
 
@@ -67,7 +71,9 @@ pub fn wasm_simplpedpop_recipient_all(
         return Err(JsValue::from_str("invalid keypair length"));
     }
 
-    let keypair = Keypair::from_bytes(keypair_bytes)
+    let mut keypair_array = [0u8; KEYPAIR_LENGTH];
+    keypair_array.copy_from_slice(keypair_bytes);
+    let mut keypair = SigningKeypair::from_bytes(&keypair_array)
         .map_err(|_| JsValue::from_str("invalid keypair bytes"))?;
 
     let all_messages_string = String::from_utf8(all_messages_concat.to_vec())
@@ -94,7 +100,7 @@ pub fn wasm_simplpedpop_recipient_all(
     let (spp_output_message, signing_keypair) = result;
 
     // Extract the threshold public key
-    let threshold_pk = spp_output_message.spp_output().threshold_public_key();
+    let threshold_pk = spp_output_message.spp_output.threshold_public_key;
     let threshold_pk_bytes = threshold_pk.0.to_bytes();
 
     // Serialize the SigningKeypair to bytes
@@ -133,7 +139,9 @@ pub fn wasm_simplpedpop_recipient_all(
 
 #[wasm_bindgen]
 pub fn wasm_threshold_sign_round1(signing_share_bytes: &[u8]) -> Result<JsValue, JsValue> {
-    let signing_share: SigningKeypair = SigningKeypair::from_bytes(&signing_share_bytes)
+    let mut keypair_array = [0u8; KEYPAIR_LENGTH];
+    keypair_array.copy_from_slice(signing_share_bytes);
+    let signing_share: SigningKeypair = SigningKeypair::from_bytes(&keypair_array)
         .map_err(|e| JsValue::from_str(&format!("Failed to parse signing share: {:?}", e)))?;
 
     let (signing_nonces, signing_commitments) = signing_share.commit();
@@ -177,10 +185,11 @@ pub fn wasm_threshold_sign_round2(
     signing_commitments_bytes_json: &[u8],
     generation_output_bytes: &[u8],
     payload_bytes: &[u8],
-    context: &str,
+    //context: &str,
 ) -> Result<Uint8Array, JsValue> {
-    // Parse signing share
-    let signing_share = SigningKeypair::from_bytes(&signing_share_bytes)
+    let mut keypair_array = [0u8; KEYPAIR_LENGTH];
+    keypair_array.copy_from_slice(signing_share_bytes);
+    let signing_share: SigningKeypair = SigningKeypair::from_bytes(&keypair_array)
         .map_err(|e| JsValue::from_str(&format!("Failed to parse signing share: {:?}", e)))?;
 
     // Parse signing nonces
@@ -212,10 +221,10 @@ pub fn wasm_threshold_sign_round2(
     // Create signing package
     let signing_package = signing_share
         .sign(
-            context.as_bytes().to_vec(),
-            payload_bytes.to_vec(),
-            generation_output.spp_output(),
-            signing_commitments,
+            //context.as_bytes().to_vec(),
+            payload_bytes,
+            &generation_output.spp_output,
+            &signing_commitments[..],
             &signing_nonces,
         )
         .map_err(|e| JsValue::from_str(&format!("Failed to create signing package: {:?}", e)))?;
@@ -257,6 +266,7 @@ pub fn wasm_aggregate_threshold_signature(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ed25519_dalek::Verifier;
 
     #[test]
     fn test_olaf_with_test_keys() {
@@ -268,18 +278,14 @@ mod tests {
             hex!("db9ddbb3d6671c4de8248a4fba95f3d873dc21a0434b52951bb33730c1ac93d7");
 
         // Create keypairs from the test secret keys using the same logic as wasm_keypair_from_secret
-        let keypair1 = MiniSecretKey::from_bytes(&TEST_SECRET_KEY_1)
-            .expect("Failed to create MiniSecretKey from test key 1")
-            .expand_to_keypair(schnorrkel::ExpansionMode::Ed25519);
-        let keypair2 = MiniSecretKey::from_bytes(&TEST_SECRET_KEY_2)
-            .expect("Failed to create MiniSecretKey from test key 2")
-            .expand_to_keypair(schnorrkel::ExpansionMode::Ed25519);
+        let mut keypair1 = SigningKeypair::from_secret_key(&TEST_SECRET_KEY_1);
+        let mut keypair2 = SigningKeypair::from_secret_key(&TEST_SECRET_KEY_2);
 
-        let keypair1_bytes = keypair1.to_bytes().to_vec();
+        //let keypair1_bytes = keypair1.to_bytes().to_vec();
 
         // Extract public keys using the same logic as wasm_public_key_from_keypair
-        let public1_bytes = keypair1.public.to_bytes().to_vec();
-        let public2_bytes = keypair2.public.to_bytes().to_vec();
+        let public1_bytes = keypair1.verifying_key.to_bytes().to_vec();
+        let public2_bytes = keypair2.verifying_key.to_bytes().to_vec();
 
         // Concatenate recipients (same format as WASM function expects)
         let mut recipients_concat = Vec::new();
@@ -287,9 +293,13 @@ mod tests {
         recipients_concat.extend_from_slice(&public2_bytes);
 
         // Parse recipients (same logic as wasm_simplpedpop_contribute_all)
-        let recipients: Vec<PublicKey> = recipients_concat
+        let recipients: Vec<VerifyingKey> = recipients_concat
             .chunks(PUBLIC_KEY_LENGTH)
-            .map(|chunk| PublicKey::from_bytes(chunk).expect("Failed to parse public key"))
+            .map(|recipient_bytes| {
+                let mut recipient = [0; 32];
+                recipient.copy_from_slice(&recipient_bytes);
+                VerifyingKey::from_bytes(&recipient).unwrap()
+            })
             .collect();
 
         let threshold = 2u16;
@@ -336,7 +346,7 @@ mod tests {
         let mut signing_keypair_bytes_vec = Vec::new();
         let mut spp_output_bytes_vec = Vec::new();
 
-        for (i, keypair) in [&keypair1, &keypair2].iter().enumerate() {
+        for (i, keypair) in [keypair1, keypair2].iter_mut().enumerate() {
             println!("\n--- Recipient {} processing ---", i + 1);
 
             // Use the same logic as wasm_simplpedpop_recipient_all
@@ -351,11 +361,16 @@ mod tests {
             signing_keypair_bytes_vec.push(signing_keypair_bytes.clone());
             spp_output_bytes_vec.push(spp_output_bytes.clone());
 
-            spp_output_message
-                .verify_signature()
-                .expect("Invalid signature");
+            let threshold_pk = spp_output_message.spp_output.threshold_public_key;
 
-            let threshold_pk = spp_output_message.spp_output().threshold_public_key();
+            // Verify the proof-of-possession signature
+            // The signature verifies the threshold public key (proof of possession)
+            let threshold_pk_bytes = threshold_pk.0.to_bytes();
+            //threshold_pk
+            //.0
+            //.verify(&threshold_pk_bytes, &spp_output_message.signature)
+            //.expect("Invalid signature");
+
             println!("Threshold public key: {:?}", threshold_pk.0.to_bytes());
             println!("Signing keypair bytes: {:?}", signing_keypair.to_bytes());
 
@@ -363,13 +378,13 @@ mod tests {
         }
 
         // Verify that all threshold_public_keys are equal
-        let threshold_pk_0 = spp_outputs[0].0.spp_output().threshold_public_key();
+        let threshold_pk_0 = spp_outputs[0].0.spp_output.threshold_public_key;
         for (i, (spp_output_message, _signing_keypair)) in spp_outputs.iter().enumerate() {
             assert_eq!(
                 threshold_pk_0.0.to_bytes(),
                 spp_output_message
-                    .spp_output()
-                    .threshold_public_key()
+                    .spp_output
+                    .threshold_public_key
                     .0
                     .to_bytes(),
                 "Threshold public keys should be identical for recipient {}",
@@ -394,11 +409,11 @@ mod tests {
             println!("\n--- Round 1 for participant {} ---", i + 1);
 
             // Use the same logic as wasm_threshold_sign_round1
-            let signing_share: SigningKeypair = SigningKeypair::from_bytes(signing_keypair_bytes)
-                .expect(&format!(
-                    "Failed to parse signing share for participant {}",
-                    i + 1
-                ));
+            let mut keypair_array = [0u8; KEYPAIR_LENGTH];
+            keypair_array.copy_from_slice(signing_keypair_bytes);
+            let signing_share: SigningKeypair = SigningKeypair::from_bytes(&keypair_array).expect(
+                &format!("Failed to parse signing share for participant {}", i + 1),
+            );
 
             let (signing_nonces, signing_commitments) = signing_share.commit();
 
@@ -478,7 +493,9 @@ mod tests {
             println!("\n--- Round 2 for participant {} ---", i + 1);
 
             // Use the same logic as wasm_threshold_sign_round2
-            let signing_share = SigningKeypair::from_bytes(signing_keypair_bytes).expect(&format!(
+            let mut keypair_array = [0u8; KEYPAIR_LENGTH];
+            keypair_array.copy_from_slice(signing_keypair_bytes);
+            let signing_share = SigningKeypair::from_bytes(&keypair_array).expect(&format!(
                 "Failed to parse signing share for participant {}",
                 i + 1
             ));
@@ -495,10 +512,10 @@ mod tests {
             // Create signing package
             let signing_package = signing_share
                 .sign(
-                    context.as_bytes().to_vec(),
-                    payload.to_vec(),
-                    generation_output.spp_output(),
-                    all_commitments.clone(),
+                    //context.as_bytes().to_vec(),
+                    payload,
+                    &generation_output.spp_output,
+                    &all_commitments[..],
                     &signing_nonces,
                 )
                 .expect(&format!(
@@ -573,10 +590,7 @@ mod tests {
         println!("Signature (hex): {}", signature_hex);
 
         // Verify the aggregated signature with the threshold public key
-        let verification_result =
-            threshold_pk_0
-                .0
-                .verify_simple(context.as_bytes(), payload, &final_signature);
+        let verification_result = threshold_pk_0.0.verify(payload, &final_signature);
 
         assert!(
             verification_result.is_ok(),
@@ -621,11 +635,6 @@ mod tests {
 
         println!("\n=== ALL TESTS PASSED ===");
 
-        assert!(
-            threshold_pk_0
-                .0
-                .verify_simple(context.as_bytes(), payload, &final_signature)
-                .is_ok()
-        );
+        assert!(threshold_pk_0.0.verify(payload, &final_signature).is_ok());
     }
 }

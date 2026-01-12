@@ -1,5 +1,5 @@
 [package]
-name = "olaf"
+name = "olaf_wasm"
 version = "0.1.0"
 edition = "2024"
 
@@ -8,7 +8,8 @@ edition = "2024"
 crate-type = ["rlib", "cdylib"]
 
 [dependencies]
-schnorrkel = { git = "https://github.com/Fiono11/schnorrkel" }
+olaf = { path = "../../Olaf_ed25519" }
+ed25519-dalek = { git = "https://github.com/rsnano-node/ed25519-dalek.git", rev = "1f9d706d7033d34bdc1ed7c1789498c82ec0df10", features = ["legacy_compatibility", "rand_core"] }
 wasm-bindgen = { version = "0.2.104" }
 js-sys = { version = "0.3.81" }
 bs58 = { version = "0.5.1", default-features = false, features = ["alloc"] }
@@ -16,7 +17,7 @@ blake2 = { version = "0.10.6", default-features = false }
 serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-getrandom = { version = "0.2.16", features = ["js"] }
+getrandom = { version = "0.3", features = ["wasm_js"] }
 
 [dev-dependencies]
 hex = "0.4.3"
