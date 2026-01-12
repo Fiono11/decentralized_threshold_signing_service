@@ -361,15 +361,12 @@ mod tests {
             signing_keypair_bytes_vec.push(signing_keypair_bytes.clone());
             spp_output_bytes_vec.push(spp_output_bytes.clone());
 
-            let threshold_pk = spp_output_message.spp_output.threshold_public_key;
+            let spp_output_data_bytes = spp_output_message.spp_output.to_bytes();
+            spp_output_message
+                .verify_signature(&spp_output_data_bytes)
+                .expect("Invalid signature");
 
-            // Verify the proof-of-possession signature
-            // The signature verifies the threshold public key (proof of possession)
-            let threshold_pk_bytes = threshold_pk.0.to_bytes();
-            //threshold_pk
-            //.0
-            //.verify(&threshold_pk_bytes, &spp_output_message.signature)
-            //.expect("Invalid signature");
+            let threshold_pk = spp_output_message.spp_output.threshold_public_key;
 
             println!("Threshold public key: {:?}", threshold_pk.0.to_bytes());
             println!("Signing keypair bytes: {:?}", signing_keypair.to_bytes());
@@ -461,8 +458,7 @@ mod tests {
         // Test Round 2 signing using the same logic as wasm_threshold_sign_round2
         println!("\n=== TESTING ROUND 2 SIGNING ===");
 
-        // Prepare test payload and context
-        let context = "test context for threshold signing";
+        // Prepare test payload
         let payload = b"test payload to sign with threshold signature";
 
         // Prepare all commitments (same format as WASM function: parse from JSON)
