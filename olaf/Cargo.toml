@@ -8,7 +8,7 @@ edition = "2024"
 crate-type = ["rlib", "cdylib"]
 
 [dependencies]
-olaf = { path = "../../Olaf_ed25519" }
+olaf = { git = "https://github.com/Fiono11/Olaf_ed25519.git", branch = "blake2b" }
 ed25519-dalek = { git = "https://github.com/rsnano-node/ed25519-dalek.git", rev = "1f9d706d7033d34bdc1ed7c1789498c82ec0df10", features = ["legacy_compatibility", "rand_core"] }
 wasm-bindgen = { version = "0.2.104" }
 js-sys = { version = "0.3.81" }

@@ -281,6 +281,7 @@ dependencies = [
 [[package]]
 name = "olaf"
 version = "0.1.0"
+source = "git+https://github.com/Fiono11/Olaf_ed25519.git?branch=blake2b#49a7ea49ffb768cafcbf99e1ec0f2d38bde8ad6a"
 dependencies = [
  "blake2",
  "curve25519-dalek 4.1.3 (git+https://github.com/rsnano-node/curve25519-dalek.git?rev=fbc3a9939608b5d455b8a7f7b3499b37834a8bcb)",
